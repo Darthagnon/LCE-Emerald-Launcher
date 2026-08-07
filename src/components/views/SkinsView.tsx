@@ -9,6 +9,7 @@ import {
   useConfig,
 } from "../../context/LauncherContext";
 import SkinViewer from "../common/SkinViewer";
+import CapePreview from "../common/CapePreview";
 
 interface SavedSkin {
   id: string;
@@ -47,6 +48,13 @@ const DEFAULT_SKINS: SavedSkin[] = [
   },
   { id: "peter", name: "Peter", url: "/Skins/Peter.png", isSlim: false },
   { id: "piebot", name: "piebot", url: "/Skins/piebot.png", isSlim: false },
+  {
+    id: "kowhaifan",
+    name: "Kowhaifan",
+    url: "/Skins/kowhaifan.png",
+    isSlim: false,
+  },
+  { id: "striker", name: "str1k3r", url: "/Skins/str1k3r.png", isSlim: true },
   { id: "andipog", name: "Andi_Pog", url: "/Skins/andi.png", isSlim: false },
   { id: "sevenhundred", name: "700", url: "/Skins/700.png", isSlim: false },
   {
@@ -55,9 +63,40 @@ const DEFAULT_SKINS: SavedSkin[] = [
     url: "/Skins/PrismaChunk0.png",
     isSlim: false,
   },
-  { id: "amy", name: "Amy", url: "/Skins/amy.png", isSlim: true },
+  { id: "amy", name: "Amy", url: "/Skins/amy.png", isSlim: true }, //neo: she's the best btw
   { id: "huckle", name: "Huckle", url: "/Skins/huckle.png", isSlim: true },
 ];
+
+const HeadPreview = memo(function HeadPreview({ src }: { src: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const cvs = canvasRef.current;
+    if (!cvs) return;
+    const ctx = cvs.getContext("2d");
+    if (!ctx) return;
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, cvs.width, cvs.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, 8, 8, 8, 8, 0, 0, cvs.width, cvs.height);
+      if (img.height !== 32) {
+        ctx.drawImage(img, 40, 8, 8, 8, 0, 0, cvs.width, cvs.height);
+      }
+    };
+    img.src = src;
+  }, [src]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={64}
+      height={64}
+      className="absolute w-full h-full"
+      style={{ imageRendering: "pixelated" }}
+    />
+  );
+});
 
 const SkinsView = memo(function SkinsView() {
   const { setActiveView, setIsUiHidden } = useUI();
@@ -271,7 +310,7 @@ const SkinsView = memo(function SkinsView() {
         if (focusIndex === null || focusIndex < TOP_BUTTONS_COUNT) {
           setFocusIndex(SKINS_START_INDEX);
         } else if (focusIndex < BACK_BUTTON_INDEX) {
-          const rowCount = viewMode === "cape" ? 3 : 4;
+          const rowCount = 4;
           const next = focusIndex + rowCount;
           setFocusIndex(next >= BACK_BUTTON_INDEX ? BACK_BUTTON_INDEX : next);
         }
@@ -283,7 +322,7 @@ const SkinsView = memo(function SkinsView() {
             viewMode === "cape" ? storedCapes.length + 1 : savedSkins.length;
           setFocusIndex(SKINS_START_INDEX + itemCount - 1);
         } else if (focusIndex >= SKINS_START_INDEX) {
-          const rowCount = viewMode === "cape" ? 3 : 4;
+          const rowCount = 4;
           const next = focusIndex - rowCount;
           setFocusIndex(next < SKINS_START_INDEX ? 0 : next);
         }
@@ -432,78 +471,69 @@ const SkinsView = memo(function SkinsView() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: useConfig().animationsEnabled ? 0.3 : 0 }}
-      className="flex flex-col items-center w-full max-w-3xl outline-none"
+      className="flex flex-col items-center w-full max-w-3xl h-full outline-none"
     >
       <h2 className="text-2xl text-white mc-text-shadow mt-2 mb-4 border-b-2 border-[#373737] pb-2 w-[60%] max-w-75 text-center tracking-widest uppercase opacity-80 font-bold">
         {viewMode === "skin" ? "Skin Library" : "Cape Library"}
       </h2>
 
-      <div
-        className="w-full max-w-160 h-85 mb-4 p-5 shadow-2xl flex flex-col relative"
-        style={{
-          backgroundImage: "url('/images/frame_background.png')",
-          backgroundSize: "100% 100%",
-          imageRendering: "pixelated",
-        }}
-      >
-        <div className="w-full flex items-center border-b-2 border-[#373737] pb-4 mb-4 relative min-h-10">
-          <div className="absolute left-0 right-0 flex justify-center gap-4 items-center">
-            <button
-              data-index="0"
-              onMouseEnter={() => setFocusIndex(0)}
-              onClick={() => {
-                playPressSound();
-                if (viewMode === "skin") handleImportClick();
-                else capeFileInputRef.current?.click();
-              }}
-              className={`w-40 h-10 flex items-center justify-center transition-colors text-2xl mc-text-shadow outline-none border-none hover:text-[#FFFF55] ${focusIndex === 0 ? "text-[#FFFF55]" : "text-white"}`}
-              style={{
-                backgroundImage:
-                  focusIndex === 0
-                    ? "url('/images/button_highlighted.png')"
-                    : "url('/images/Button_Background.png')",
-                backgroundSize: "100% 100%",
-                imageRendering: "pixelated",
-              }}
-            >
-              {viewMode === "skin" ? "Import Skin" : "Import Cape"}
-            </button>
+      <div className="w-full max-w-160 flex-1 min-h-0 mb-4 p-5 flex flex-col relative overflow-hidden">
+        <div className="w-full flex items-center gap-4 ml-5 pb-4 mb-4 min-h-10">
+          <button
+            data-index="0"
+            onMouseEnter={() => setFocusIndex(0)}
+            onClick={() => {
+              playPressSound();
+              if (viewMode === "skin") handleImportClick();
+              else capeFileInputRef.current?.click();
+            }}
+            className={`w-40 h-10 flex items-center justify-center transition-colors text-2xl mc-text-shadow outline-none border-none hover:text-[#FFFF55] ${focusIndex === 0 ? "text-[#FFFF55]" : "text-white"}`}
+            style={{
+              backgroundImage:
+                focusIndex === 0
+                  ? "url('/images/button_highlighted.png')"
+                  : "url('/images/Button_Background.png')",
+              backgroundSize: "100% 100%",
+              imageRendering: "pixelated",
+            }}
+          >
+            {viewMode === "skin" ? "Import Skin" : "Import Cape"}
+          </button>
 
-            <button
-              data-index="1"
-              onMouseEnter={() => {
-                if (viewMode === "skin" && !isActiveDefault) setFocusIndex(1);
-                else if (viewMode === "cape" && !isActiveCapeDefault)
-                  setFocusIndex(1);
-              }}
-              onClick={() => {
-                playPressSound();
-                if (viewMode === "skin") handleDeleteActive();
-                else handleDeleteActiveCape();
-              }}
-              className={`w-40 h-10 flex items-center justify-center transition-colors text-2xl mc-text-shadow outline-none border-none ${
+          <button
+            data-index="1"
+            onMouseEnter={() => {
+              if (viewMode === "skin" && !isActiveDefault) setFocusIndex(1);
+              else if (viewMode === "cape" && !isActiveCapeDefault)
+                setFocusIndex(1);
+            }}
+            onClick={() => {
+              playPressSound();
+              if (viewMode === "skin") handleDeleteActive();
+              else handleDeleteActiveCape();
+            }}
+            className={`w-40 h-10 flex items-center justify-center transition-colors text-2xl mc-text-shadow outline-none border-none ${
+              (viewMode === "skin" && isActiveDefault) ||
+              (viewMode === "cape" && isActiveCapeDefault)
+                ? "text-gray-400 opacity-80 cursor-not-allowed"
+                : focusIndex === 1
+                  ? "text-[#FFFF55]"
+                  : "text-white"
+            }`}
+            style={{
+              backgroundImage:
                 (viewMode === "skin" && isActiveDefault) ||
                 (viewMode === "cape" && isActiveCapeDefault)
-                  ? "text-gray-400 opacity-80 cursor-not-allowed"
+                  ? "url('/images/Button_Background2.png')"
                   : focusIndex === 1
-                    ? "text-[#FFFF55]"
-                    : "text-white"
-              }`}
-              style={{
-                backgroundImage:
-                  (viewMode === "skin" && isActiveDefault) ||
-                  (viewMode === "cape" && isActiveCapeDefault)
-                    ? "url('/images/Button_Background2.png')"
-                    : focusIndex === 1
-                      ? "url('/images/button_highlighted.png')"
-                      : "url('/images/Button_Background.png')",
-                backgroundSize: "100% 100%",
-                imageRendering: "pixelated",
-              }}
-            >
-              {viewMode === "skin" ? "Delete Skin" : "Delete Cape"}
-            </button>
-          </div>
+                    ? "url('/images/button_highlighted.png')"
+                    : "url('/images/Button_Background.png')",
+              backgroundSize: "100% 100%",
+              imageRendering: "pixelated",
+            }}
+          >
+            {viewMode === "skin" ? "Delete Skin" : "Delete Cape"}
+          </button>
 
           <div className="flex-1"></div>
           <div className="flex justify-end z-10">
@@ -551,7 +581,7 @@ const SkinsView = memo(function SkinsView() {
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto pr-2 flex flex-wrap gap-x-8 gap-y-6 items-start content-start justify-center">
+        <div className="flex-1 overflow-y-auto pr-2 flex flex-wrap gap-x-4 gap-y-6 items-start content-start justify-center hidden-scrollbar">
           {viewMode === "skin" ? (
             savedSkins.map((skin, i) => {
               const idx = SKINS_START_INDEX + i;
@@ -583,21 +613,7 @@ const SkinsView = memo(function SkinsView() {
                     onClick={() => handleSkinSelect(skin)}
                     className={`w-16 h-16 bg-black/40 border-2 shadow-inner relative cursor-pointer overflow-hidden transition-colors outline-none ${isActive || isFocused ? "border-[#FFFF55]" : "border-[#373737] hover:border-[#A0A0A0]"}`}
                   >
-                    <img
-                      src={skin.url}
-                      draggable={false}
-                      alt={skin.name}
-                      className="absolute max-w-none"
-                      style={{
-                        width: "800%",
-                        height: "auto",
-                        left: "-100%",
-                        top: "-100%",
-                        imageRendering: "pixelated",
-                      }}
-                      loading="lazy"
-                      decoding="async"
-                    />
+                    <HeadPreview src={skin.url} />
                   </div>
                   <input
                     type="text"
@@ -668,21 +684,7 @@ const SkinsView = memo(function SkinsView() {
                       onClick={() => handleCapeSelect(cape)}
                       className={`w-16 h-16 bg-black/40 border-2 shadow-inner relative cursor-pointer overflow-hidden transition-colors outline-none ${isActive || isFocused ? "border-[#FFFF55]" : "border-[#373737] hover:border-[#A0A0A0]"}`}
                     >
-                      <img
-                        src={cape.url}
-                        draggable={false}
-                        alt={cape.name}
-                        className="absolute max-w-none"
-                        style={{
-                          width: "auto",
-                          height: "100%",
-                          left: "0",
-                          top: "0",
-                          imageRendering: "pixelated",
-                        }}
-                        loading="lazy"
-                        decoding="async"
-                      />
+                      <CapePreview src={cape.url} />
                     </div>
                     <input
                       type="text"
@@ -727,7 +729,7 @@ const SkinsView = memo(function SkinsView() {
           playBackSound();
           setActiveView("main");
         }}
-        className={`w-72 h-14 flex items-center justify-center transition-colors text-2xl mc-text-shadow mt-2 outline-none border-none hover:text-[#FFFF55] ${focusIndex === BACK_BUTTON_INDEX ? "text-[#FFFF55]" : "text-white"}`}
+        className={`w-72 h-14 shrink-0 flex items-center justify-center transition-colors text-2xl mc-text-shadow mt-2 outline-none border-none hover:text-[#FFFF55] ${focusIndex === BACK_BUTTON_INDEX ? "text-[#FFFF55]" : "text-white"}`}
         style={{
           backgroundImage:
             focusIndex === BACK_BUTTON_INDEX

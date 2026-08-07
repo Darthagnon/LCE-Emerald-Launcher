@@ -194,6 +194,12 @@ export class TauriService {
     );
   }
 
+  static onWorkshopProgress(callback: (data: { packageId: string; percent: number }) => void) {
+    return listen<{ instanceId: string; percent: number }>("workshop-progress", (event) =>
+      callback({ packageId: event.payload.instanceId, percent: event.payload.percent }),
+    );
+  }
+
   static onRunnerDownloadProgress(callback: (percent: number) => void) {
     return listen<number>("runner-download-progress", (event) =>
       callback(event.payload),
@@ -208,6 +214,12 @@ export class TauriService {
 
   static onBackendError(callback: (message: string) => void) {
     return listen<string>("backend-error", (event) =>
+      callback(event.payload),
+    );
+  }
+
+  static onGameLog(callback: (log: string) => void) {
+    return listen<string>("game-log", (event) =>
       callback(event.payload),
     );
   }
@@ -419,5 +431,26 @@ export class TauriService {
     outputPath: string,
   ): Promise<string> {
     return invoke("import_world", { inputPath, outputPath });
+  }
+
+  static async importLceSave(
+    inputPath: string,
+    outputDir: string,
+  ): Promise<string> {
+    return invoke("import_lce_save", { inputPath, outputDir });
+  }
+
+  static async javaToLce(
+    javaWorldPath: string,
+    outputMsPath: string,
+  ): Promise<string> {
+    return invoke("java_to_lce", { javaWorldPath, outputMsPath });
+  }
+
+  static async lceToJava(
+    inputMsPath: string,
+    javaWorldOutput: string,
+  ): Promise<string> {
+    return invoke("lce_to_java", { inputMsPath, javaWorldOutput });
   }
 }

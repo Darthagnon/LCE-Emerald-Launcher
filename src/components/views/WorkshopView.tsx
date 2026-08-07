@@ -124,6 +124,55 @@ interface PluginRegistryEntry {
 }
 
 const COLS = 4;
+interface ZipGroup {
+  main: string;
+  parts: string[];
+  dest: string;
+}
+function groupZips(zips: Record<string, string>): ZipGroup[] {
+  const entries = Object.entries(zips).sort(([a], [b]) => a.localeCompare(b));
+  const consumed = new Set<string>();
+  const groups: ZipGroup[] = [];
+  for (const [name, dest] of entries) {
+    if (consumed.has(name)) continue;
+    if (!name.toLowerCase().endsWith(".zip")) continue;
+    const base = name.slice(0, -4);
+    const parts = [name];
+    consumed.add(name);
+    let n = 1;
+    for (;;) {
+      const cand = `${base}.z${String(n).padStart(2, "0")}`;
+      if (zips[cand] !== undefined) {
+        parts.push(cand);
+        consumed.add(cand);
+        n++;
+      } else {
+        break;
+      }
+    }
+    if (parts.length === 1) {
+      n = 1;
+      for (;;) {
+        const cand = `${base}.zip.${String(n).padStart(3, "0")}`;
+        if (zips[cand] !== undefined) {
+          parts.push(cand);
+          consumed.add(cand);
+          n++;
+        } else {
+          break;
+        }
+      }
+    }
+    groups.push({ main: name, parts, dest });
+  }
+  for (const [name, dest] of entries) {
+    if (!consumed.has(name)) {
+      consumed.add(name);
+      groups.push({ main: name, parts: [name], dest });
+    }
+  }
+  return groups;
+}
 interface WorkshopViewProps {
   workshopTarget?: { id: string; type?: string } | null;
   onClearWorkshopTarget?: () => void;
@@ -1736,21 +1785,36 @@ function PackageModal({
                   Files
                 </span>
                 <div className="space-y-1.5">
-                  {Object.entries(pkg.zips).map(([file, dest]) => (
-                    <div
-                      key={file}
-                      className="flex items-center justify-between gap-4 bg-black/20 p-2 rounded-sm border border-[#222]"
-                    >
-                      <span className="text-xs text-[#A0A0A0] mc-text-shadow font-mono">
-                        {file}
-                      </span>
-                      {dest && (
-                        <span className="text-[9px] text-[#fff] mc-text-shadow truncate uppercase tracking-tighter">
-                          {dest}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                  {groupZips(pkg.zips).map((group) => {
+                    const isSplit = group.parts.length > 1;
+                    return (
+                      <div
+                        key={group.main}
+                        className="flex items-center justify-between gap-4 bg-black/20 p-2 rounded-sm border border-[#222]"
+                      >
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="text-xs text-[#A0A0A0] mc-text-shadow font-mono">
+                            {group.main}
+                            {isSplit && (
+                              <span className="ml-2 text-[8px] text-[#FFFF55] bg-black/60 border border-[#555] px-1.5 py-0.5 uppercase tracking-widest">
+                                Split archive · {group.parts.length} parts
+                              </span>
+                            )}
+                          </span>
+                          {isSplit && (
+                            <span className="text-[9px] text-[#666] mc-text-shadow font-mono">
+                              {group.parts.slice(1).join(", ")}
+                            </span>
+                          )}
+                        </div>
+                        {group.dest && (
+                          <span className="text-[9px] text-[#fff] mc-text-shadow truncate uppercase tracking-tighter">
+                            {group.dest}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1963,10 +2027,37 @@ function InstallModal({
     "idle" | "installing" | "success" | "error"
   >("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
+  const [pkgPct, setPkgPct] = useState<Record<string, number>>({});
+
+  const installTargets = useMemo(() => {
+    const targets: { id: string; zips: number }[] = [];
+    for (const depId of dependencies) {
+      const dep = allPackages.find((p) => p.id === depId);
+      if (dep?.zips) targets.push({ id: dep.id, zips: Object.keys(dep.zips).length });
+    }
+    if (pkg.zips) targets.push({ id: pkg.id, zips: Object.keys(pkg.zips).length });
+    return targets;
+  }, [dependencies, allPackages, pkg.zips, pkg.id]);
+
+  const totalZips = installTargets.reduce((acc, t) => acc + t.zips, 0);
+
+  const overallProgress = useMemo(() => {
+    if (totalZips === 0) return 0;
+    let done = 0;
+    for (const t of installTargets) {
+      const pct = pkgPct[t.id];
+      if (pct !== undefined) done += (pct / 100) * t.zips;
+    }
+    return Math.min(100, Math.round((done / totalZips) * 100));
+  }, [pkgPct, installTargets, totalZips]);
 
   const installPlugin = useCallback(async () => {
     setStatus("installing");
     setErrorMsg(null);
+    setProgress(0);
+    setProgressLabel(null);
     playPressSound();
     try {
       const pluginsDir = await TauriService.getPluginsDir();
@@ -1994,7 +2085,10 @@ function InstallModal({
       const pluginBaseUrl = `${RAW_BASE}/.00plugins/${pkg.id}`;
 
       const allFiles = [pkg.main || "main.js", ...(pkg.files || [])];
-      for (const file of allFiles) {
+      for (let i = 0; i < allFiles.length; i++) {
+        const file = allFiles[i];
+        setProgressLabel(file);
+        setProgress(Math.round((i / allFiles.length) * 100));
         const res = await TauriService.httpProxyRequest(
           "GET",
           `${pluginBaseUrl}/${file}`,
@@ -2006,6 +2100,7 @@ function InstallModal({
           `${pluginDir}/${file}`,
           encoder.encode(res.body),
         );
+        setProgress(Math.round(((i + 1) / allFiles.length) * 100));
       }
 
       await PluginManager.instance.reload();
@@ -2063,6 +2158,7 @@ function InstallModal({
     for (const depId of dependencies) {
       const depPkg = allPackages.find((p) => p.id === depId);
       if (!depPkg || !depPkg.zips) continue;
+      setProgressLabel(depPkg.name);
       try {
         await TauriService.workshopInstall(
           instanceId,
@@ -2079,11 +2175,18 @@ function InstallModal({
   const installTo = async (instanceId: string) => {
     setStatus("installing");
     setErrorMsg(null);
+    setProgress(0);
+    setProgressLabel(null);
+    setPkgPct({});
     playPressSound();
+    const unlisten = await TauriService.onWorkshopProgress((data) => {
+      setPkgPct((prev) => ({ ...prev, [data.packageId]: data.percent }));
+    });
     try {
       if (dependencies.length > 0) {
         await installDeps(instanceId);
       }
+      setProgressLabel(pkg.name);
       await TauriService.workshopInstall(
         instanceId,
         pkg.id,
@@ -2101,6 +2204,8 @@ function InstallModal({
             ? e
             : "Unknown error",
       );
+    } finally {
+      unlisten();
     }
   };
 
@@ -2153,6 +2258,25 @@ function InstallModal({
                     ? "Downloading and extracting required dependencies"
                     : "Downloading and extracting assets"}
               </span>
+              <div className="w-full flex flex-col gap-1 px-2 mt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-[#FFFF55] mc-text-shadow truncate">
+                    {progressLabel ||
+                      (isPluginTab ? "Downloading plugin files" : "Downloading assets")}
+                  </span>
+                  <span className="text-[11px] text-[#FFFF55] mc-text-shadow shrink-0">
+                    {Math.floor(isPluginTab ? progress : overallProgress)}%
+                  </span>
+                </div>
+                <div className="h-3 border-2 border-[#3F3F3F] bg-black/60 p-0.5">
+                  <div
+                    className="h-full bg-[#FFFF55]"
+                    style={{
+                      width: `${isPluginTab ? progress : overallProgress}%`,
+                    }}
+                  />
+                </div>
+              </div>
               {dependencies.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 justify-center mt-2">
                   {dependencies.map((depId) => {

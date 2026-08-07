@@ -71,7 +71,7 @@ export const BASE_EDITIONS = [
     id: "moon_edition",
     name: "Minecraft: Moon Edition",
     desc: "Galacticraft LCE port (Modded build!)",
-    url: "https://github.com/blazin-blaze/moon-edition/releases/download/v1.0.1/moonEditionWindows64.zip",
+    url: "https://github.com/blazin-blaze/moon-edition/releases/latest/download/moonEditionWindows64.zip",
     titleImage: "/images/minecraft_title_moon.png",
     supportsSlimSkins: false,
     logo: "/images/moonEdition.png",
@@ -113,6 +113,8 @@ interface GameManagerProps {
   setProfile: (id: string) => void;
   customEditions: CustomEdition[];
   setCustomEditions: (editions: CustomEdition[]) => void;
+  customPaths: Record<string, string>;
+  setCustomPaths: Dispatch<SetStateAction<Record<string, string>>>;
   customizations: Record<string, { titleImage?: string; panorama?: string }>;
   setCustomizations: Dispatch<
     SetStateAction<Record<string, { titleImage?: string; panorama?: string }>>
@@ -142,6 +144,7 @@ export function useGameManager({
   setProfile,
   customEditions,
   setCustomEditions,
+  setCustomPaths,
   customizations,
   setCustomizations,
   extraLaunchArgs,
@@ -157,6 +160,8 @@ export function useGameManager({
     number | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  const [gameLog, setGameLog] = useState<string | null>(null);
+  const gameLogRef = useRef(false);
   const [gameUpdateMessage, setGameUpdateMessage] = useState<string | null>(
     null,
   );
@@ -392,11 +397,18 @@ export function useGameManager({
     const unlistenRetry = TauriService.onDownloadRetry((attempt) => {
       setError(`Download failed, retrying (${attempt}/3)...`);
     });
+    const unlistenGameLog = TauriService.onGameLog((log) => {
+      gameLogRef.current = true;
+      setError(null);
+      setGameLog(log);
+      getCurrentWindow().unminimize();
+    });
     return () => {
       unlistenDownload.then((u) => u());
       unlistenRunner.then((u) => u());
       unlistenError.then((u) => u());
       unlistenRetry.then((u) => u());
+      unlistenGameLog.then((u) => u());
     };
   }, [customEditions, checkInstalls]);
 
@@ -513,13 +525,15 @@ export function useGameManager({
       );
     } catch (e: unknown) {
       console.error(e);
-      setError(
-        e instanceof Error
-          ? e.message
-          : typeof e === "string"
-            ? e
-            : "Failed to launch game",
-      );
+      if (!gameLogRef.current) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : typeof e === "string"
+              ? e
+              : "Failed to launch game",
+        );
+      }
     } finally {
       setIsGameRunning(false);
     }
@@ -597,9 +611,15 @@ export function useGameManager({
         [instanceId]: path,
       };
       await TauriService.saveConfig(config);
+      setCustomPaths((prev) => ({ ...prev, [instanceId]: path }));
     },
-    [],
+    [setCustomPaths],
   );
+
+  const clearGameLog = useCallback(() => {
+    gameLogRef.current = false;
+    setGameLog(null);
+  }, []);
 
   const addToSteam = useCallback(
     async (
@@ -638,6 +658,8 @@ export function useGameManager({
     runnerDownloadProgress,
     error,
     setError,
+    gameLog,
+    clearGameLog,
     editions,
     toggleInstall,
     handleUninstall,
