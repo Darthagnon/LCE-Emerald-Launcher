@@ -160,7 +160,7 @@ const SkinsView = memo(function SkinsView() {
   ];
   const [activeCapeId, setActiveCapeId] = useState<string | null>(null);
 
-  const TOP_BUTTONS_COUNT = viewMode === "skin" ? 3 : 3;
+  const TOP_BUTTONS_COUNT = viewMode === "skin" ? 4 : 3;
   const SKINS_START_INDEX = TOP_BUTTONS_COUNT;
   const BACK_BUTTON_INDEX =
     SKINS_START_INDEX +
@@ -371,8 +371,16 @@ const SkinsView = memo(function SkinsView() {
           if (viewMode === "skin") handleDeleteActive();
           else handleDeleteActiveCape();
         } else if (focusIndex === 2) {
+          if (viewMode === "skin") {
+            playPressSound();
+            setActiveView("skin-editor");
+          } else {
+            playPressSound();
+            setViewMode("skin");
+          }
+        } else if (focusIndex === 3 && viewMode === "skin") {
           playPressSound();
-          setViewMode(viewMode === "skin" ? "cape" : "skin");
+          setViewMode("cape");
         } else if (focusIndex < BACK_BUTTON_INDEX) {
           if (viewMode === "cape") {
             const capeIdx = focusIndex - SKINS_START_INDEX;
@@ -588,11 +596,36 @@ const SkinsView = memo(function SkinsView() {
             {viewMode === "skin" ? "Delete Skin" : "Delete Cape"}
           </button>
 
-          <div className="flex-1"></div>
-          <div className="flex justify-end z-10">
+          {viewMode === "skin" && (
             <button
               data-index="2"
               onMouseEnter={() => setFocusIndex(2)}
+              onClick={() => {
+                playPressSound();
+                setActiveView("skin-editor");
+              }}
+              className={`w-40 h-10 flex items-center 
+                justify-center transition-colors text-2xl 
+                mc-text-shadow outline-none border-none hover:text-[#FFFF55] 
+                ${focusIndex === 2 ? "text-[#FFFF55]" : "text-white"}`}
+              style={{
+                backgroundImage:
+                  focusIndex === 2
+                    ? "url('/images/button_highlighted.png')"
+                    : "url('/images/Button_Background.png')",
+                backgroundSize: "100% 100%",
+                imageRendering: "pixelated",
+              }}
+            >
+              Edit Skin
+            </button>
+          )}
+
+          <div className="flex-1"></div>
+          <div className="flex justify-end z-10">
+            <button
+              data-index={viewMode === "skin" ? 3 : 2}
+              onMouseEnter={() => setFocusIndex(viewMode === "skin" ? 3 : 2)}
               onClick={() => {
                 playPressSound();
                 setViewMode(viewMode === "skin" ? "cape" : "skin");
@@ -600,7 +633,7 @@ const SkinsView = memo(function SkinsView() {
               className={`mc-sq-btn w-10 h-10 flex items-center justify-center outline-none border-none transition-all`}
               style={{
                 backgroundImage:
-                  focusIndex === 2
+                  focusIndex === (viewMode === "skin" ? 3 : 2)
                     ? "url('/images/Button_Square_Highlighted.png')"
                     : "url('/images/Button_Square.png')",
                 backgroundSize: "100% 100%",
