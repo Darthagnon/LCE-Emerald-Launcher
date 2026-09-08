@@ -85,7 +85,7 @@ jobs:
         with:
           name: ${{ matrix.artifact-name }}
           path: |
-            src-tauri/target/*/release/bundle/**/*
+            src-tauri/target/**/release/bundle/**/*
 
   build-flatpak:
     runs-on: ubuntu-latest
@@ -108,3 +108,139 @@ jobs:
         with:
           name: flatpak
           path: Emerald.Legacy.Launcher.flatpak
+
+  build-appimage:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Bootstrap keyring and git
+        run: |
+          pacman -Syu --noconfirm archlinux-keyring
+          pacman -S --noconfirm --needed git
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/target
+            node_modules
+            /var/cache/pacman/pkg
+          key: arch-${{ hashFiles('src-tauri/Cargo.lock', 'pnpm-lock.yaml') }}
+          restore-keys: arch-
+
+      - name: Install build dependencies
+        run: |
+          pacman -S --noconfirm --needed \
+            base-devel wget zsync nodejs patchelf \
+            cargo cargo-tauri \
+            gtk3 libayatana-appindicator webkit2gtk-4.1 glib-networking librsvg \
+            xorg-server-xvfb
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Build deb with tauri
+        run: |
+          pnpm install
+          cargo-tauri build --bundles deb --config '{"bundle":{"createUpdaterArtifacts":false},"build":{"beforeBuildCommand":"pnpm build"}}'
+
+      - name: Extract deb into /usr
+        run: |
+          cd src-tauri/target/release/bundle/deb
+          ar x ./*.deb
+          tar -xf data.tar.*
+          cp -a usr/. /usr/
+
+      - name: Build AppImage
+        run: |
+          cd pkg/AppImage
+          chmod +x ./AppImage.sh
+          ./AppImage.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: pkg/AppImage/dist/*.AppImage
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: "pnpm"
+
+      - name: setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: setup Android SDK
+        uses: android-actions/setup-android@v4
+      - name: install Android SDK components
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          yes | sdkmanager --licenses
+          sudo apt-get install -y glslang-tools
+
+      - name: install Rust stable with android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: install frontend dependencies
+        run: pnpm install
+
+      - name: download android bundled assets
+        run: pnpm android:assets
+
+      - name: restore gradle wrapper jar
+        run: |
+          VER=$(sed -n 's/.*gradle-\([0-9][0-9.]*\)-bin\.zip.*/\1/p' src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties)
+          curl -fL -o src-tauri/gen/android/gradle/wrapper/gradle-wrapper.jar \
+            "https://raw.githubusercontent.com/gradle/gradle/v${VER}/gradle/wrapper/gradle-wrapper.jar"
+
+      - name: set up android signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/app/release.keystore
+          cat > src-tauri/gen/android/app/key.properties <<EOF
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEYSTORE_PASSWORD
+          storeFile=release.keystore
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          EOF
+
+      - name: build Android APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: npx tauri android build --target aarch64
+      - name: upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk

@@ -10,12 +10,14 @@ interface DevTool {
 }
 
 const DEV_TOOLS: DevTool[] = [
+  { id: "guides", name: "Community Guides", view: "guides", comingSoon: false },
   { id: "pck", name: "PCK Editor", view: "pck-editor", comingSoon: false },
   { id: "arc", name: "ARC Editor", view: "arc-editor", comingSoon: false },
   { id: "loc", name: "LOC Editor", view: "loc-editor", comingSoon: false },
   { id: "grf", name: "GRF Editor", view: "grf-editor", comingSoon: false },
   { id: "col", name: "COL Editor", view: "col-editor", comingSoon: false },
-  { id: "options", name: "Options Editor", view: "options-editor", comingSoon: false }
+  { id: "options", name: "Options Editor", view: "options-editor", comingSoon: false },
+  { id: "model", name: "Model Editor", view: "model-editor", comingSoon: false }
 ];
 
 export default function DevtoolsView() {
@@ -76,14 +78,14 @@ export default function DevtoolsView() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: animationsEnabled ? 0.3 : 0 }}
-      className="flex flex-col items-center w-full max-w-3xl outline-none"
+      className="flex flex-col items-center w-full max-w-3xl h-full outline-none"
     >
       <h2 className="text-2xl text-white mc-text-shadow mt-2 mb-4 border-b-2 border-[#373737] pb-2 w-[60%] max-w-75 text-center tracking-widest uppercase opacity-80 font-bold">
         Developer Tools
       </h2>
 
       <div
-        className="w-full max-w-160 h-85 mb-4 p-8 shadow-2xl flex flex-col items-center"
+        className="w-full max-w-160 flex-1 min-h-0 mb-4 p-8 shadow-2xl flex flex-col items-center overflow-hidden"
         style={{
           backgroundImage: "url('/images/frame_background.png')",
           backgroundSize: "100% 100%",
@@ -110,6 +112,17 @@ export default function DevtoolsView() {
                   alt={tool.name}
                   className="w-12 h-12 object-contain opacity-50 grayscale"
                   style={{ imageRendering: "pixelated" }}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    target.style.display = "none";
+                    const parent = target.parentElement;
+                    if (parent && !parent.querySelector(".tool-fallback")) {
+                      const fallback = document.createElement("span");
+                      fallback.className = "tool-fallback text-2xl text-white/30 mc-text-shadow uppercase font-bold";
+                      fallback.textContent = tool.name.charAt(0);
+                      parent.appendChild(fallback);
+                    }
+                  }}
                 />
                 {tool.comingSoon && (
                   <div className="absolute inset-0 flex items-center justify-center bg-black/60">
@@ -137,7 +150,7 @@ export default function DevtoolsView() {
           playBackSound();
           setActiveView("main");
         }}
-        className={`w-72 h-14 flex items-center justify-center transition-colors text-2xl mc-text-shadow mt-2 outline-none border-none ${focusIndex === BACK_BUTTON_INDEX ? "text-[#FFFF55]" : "text-white"
+        className={`w-72 h-14 shrink-0 flex items-center justify-center transition-colors text-2xl mc-text-shadow mt-2 outline-none border-none ${focusIndex === BACK_BUTTON_INDEX ? "text-[#FFFF55]" : "text-white"
           }`}
         style={{
           backgroundImage:

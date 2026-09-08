@@ -27,6 +27,20 @@ pub struct CustomEdition {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct CustomizationEntry {
+    pub title_image: Option<String>,
+    pub panorama: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceLaunchArgs {
+    pub values: std::collections::HashMap<String, serde_json::Value>,
+    pub args: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub username: String,
     pub linux_runner: Option<String>,
@@ -36,18 +50,25 @@ pub struct AppConfig {
     pub theme_palette_id: Option<String>,
     pub apple_silicon_performance_boost: Option<bool>,
     pub custom_editions: Option<Vec<CustomEdition>>,
+    pub customizations: Option<std::collections::HashMap<String, CustomizationEntry>>,
+    pub custom_paths: Option<std::collections::HashMap<String, String>>,
     pub profile: Option<String>,
     pub animations_enabled: Option<bool>,
     pub vfx_enabled: Option<bool>,
     pub rpc_enabled: Option<bool>,
+    pub start_fullscreen: Option<bool>,
     pub music_vol: Option<u32>,
     pub sfx_vol: Option<u32>,
     pub legacy_mode: Option<bool>,
+    pub skip_intro: Option<bool>,
     pub mangohud_enabled: Option<bool>,
     pub saved_servers: Option<Vec<McServer>>,
     pub extra_launch_args: Option<Vec<String>>,
     pub launch_prefix: Option<String>,
     pub launch_env_vars: Option<std::collections::HashMap<String, String>>,
+    pub instance_launch_args: Option<std::collections::HashMap<String, InstanceLaunchArgs>>,
+    pub android_runner: Option<String>,
+    pub android_audio_backend: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -36,6 +36,7 @@ export interface AppConfig {
   animationsEnabled?: boolean;
   vfxEnabled?: boolean;
   rpcEnabled?: boolean;
+  startFullscreen?: boolean;
   musicVol?: number;
   sfxVol?: number;
   legacyMode?: boolean;
@@ -44,6 +45,15 @@ export interface AppConfig {
   extraLaunchArgs?: string[];
   launchPrefix?: string;
   launchEnvVars?: Record<string, string>;
+  customizations?: Record<string, { titleImage?: string; panorama?: string }>;
+  customPaths?: Record<string, string>;
+  skipIntro?: boolean;
+  instanceLaunchArgs?: Record<
+    string,
+    { values: Record<string, unknown>; args: string[] }
+  >;
+  androidRunner?: string;
+  androidAudioBackend?: "alsa" | "pulseaudio";
 }
 
 export interface ThemePalette {
@@ -56,7 +66,7 @@ export interface Runner {
   id: string;
   name: string;
   path: string;
-  type: "wine" | "proton";
+  type: "wine" | "proton"; //neo: i beg you please use Proton dont use WINE, WineD3D sickens me
 }
 
 export interface MacOSSetupProgress {
@@ -123,12 +133,16 @@ export class TauriService {
     return invoke("open_instance_folder", { instanceId });
   }
 
+  static async openContainerSettings(instanceId: string): Promise<void> {
+    return invoke("open_container_settings", { instanceId });
+  }
+
   static async deleteInstance(instanceId: string): Promise<void> {
     return invoke("delete_instance", { instanceId });
   }
 
-  static async cancelDownload(): Promise<void> {
-    return invoke("cancel_download");
+  static async cancelDownload(instanceId: string): Promise<void> {
+    return invoke("cancel_download", { instanceId });
   }
 
   static async setupMacosRuntime(): Promise<void> {
@@ -147,7 +161,11 @@ export class TauriService {
     servers: McServer[],
     extraArgs?: string[],
   ): Promise<void> {
-    return invoke("launch_game", { instanceId, servers, extraArgs: extraArgs ?? [] });
+    return invoke("launch_game", {
+      instanceId,
+      servers,
+      extraArgs: extraArgs ?? [],
+    });
   }
 
   static async stopGame(instanceId: string): Promise<void> {
@@ -169,7 +187,10 @@ export class TauriService {
     });
   }
 
-  static async workshopUninstall(instanceId: string, packageId: string): Promise<void> {
+  static async workshopUninstall(
+    instanceId: string,
+    packageId: string,
+  ): Promise<void> {
     return invoke("workshop_uninstall", { instanceId, packageId });
   }
 
@@ -177,9 +198,25 @@ export class TauriService {
     return invoke("workshop_list_installed");
   }
 
-  static onDownloadProgress(callback: (percent: number) => void) {
-    return listen<number>("download-progress", (event) =>
-      callback(event.payload),
+  static onDownloadProgress(
+    callback: (data: { instanceId: string; percent: number }) => void,
+  ) {
+    return listen<{ instanceId: string; percent: number }>(
+      "download-progress",
+      (event) => callback(event.payload),
+    );
+  }
+
+  static onWorkshopProgress(
+    callback: (data: { packageId: string; percent: number }) => void,
+  ) {
+    return listen<{ instanceId: string; percent: number }>(
+      "workshop-progress",
+      (event) =>
+        callback({
+          packageId: event.payload.instanceId,
+          percent: event.payload.percent,
+        }),
     );
   }
 
@@ -195,8 +232,24 @@ export class TauriService {
     );
   }
 
+  static onBackendError(callback: (message: string) => void) {
+    return listen<string>("backend-error", (event) => callback(event.payload));
+  }
+
+  static onGameLog(callback: (log: string) => void) {
+    return listen<string>("game-log", (event) => callback(event.payload));
+  }
+
+  static onDownloadRetry(callback: (attempt: number) => void) {
+    return listen<number>("download-retry", (event) => callback(event.payload));
+  }
+
   static async openUrl(url: string): Promise<void> {
     return invoke("plugin:opener|open_url", { url });
+  }
+
+  static async startLceOnlineAuth(): Promise<string> {
+    return invoke("start_lce_auth");
   }
 
   static async restartLauncher(): Promise<void> {
@@ -223,7 +276,10 @@ export class TauriService {
     return invoke("save_global_skin_pck", { pckData: Array.from(pckData) });
   }
 
-  static async checkGameUpdate(instanceId: string, url: string): Promise<boolean> {
+  static async checkGameUpdate(
+    instanceId: string,
+    url: string,
+  ): Promise<boolean> {
     return invoke("check_game_update", { instanceId, url });
   }
 
@@ -235,7 +291,11 @@ export class TauriService {
     return invoke("pick_file", { title, filters });
   }
 
-  static async saveFileDialog(title: string, filename: string, filters: string[]): Promise<string> {
+  static async saveFileDialog(
+    title: string,
+    filename: string,
+    filters: string[],
+  ): Promise<string> {
     return invoke("save_file_dialog", { title, filename, filters });
   }
 
@@ -256,25 +316,35 @@ export class TauriService {
     instanceId: string,
     name: string,
     titleBase64: string,
-    panoramaBase64: string
+    panoramaBase64: string,
   ): Promise<void> {
-    return invoke("add_to_steam", { instanceId, name, titleBase64, panoramaBase64 });
+    return invoke("add_to_steam", {
+      instanceId,
+      name,
+      titleBase64,
+      panoramaBase64,
+    });
   }
 
   static async stunDiscover(): Promise<{ ip: string; port: number }> {
     return invoke("stun_discover");
   }
 
-  static async startDirectProxy(targetIp: string, targetPort: number): Promise<number> {
-    return invoke("start_direct_proxy", { targetIp, targetPort });
+  static async startRelayProxy(
+    authToken: string,
+    targetSession: string,
+  ): Promise<number> {
+    return invoke("start_relay_proxy", { authToken, targetSession });
   }
 
-  static async startRelayProxy(apiBaseUrl: string, accessToken: string, sessionId: string): Promise<number> {
-    return invoke("start_relay_proxy", { apiBaseUrl, accessToken, sessionId });
-  }
-
-  static async startHostRelay(apiBaseUrl: string, accessToken: string, sessionId: string, gamePort: number): Promise<void> {
-    return invoke("start_host_relay", { apiBaseUrl, accessToken, sessionId, gamePort });
+  static async startHostRelay(
+    authToken: string,
+    gamePort: number,
+  ): Promise<void> {
+    return invoke("start_host_relay", {
+      authToken,
+      gamePort,
+    });
   }
 
   static async stopProxy(sessionId: string): Promise<void> {
@@ -287,20 +357,27 @@ export class TauriService {
 
   static async joinGame(
     apiBaseUrl: string,
-    accessToken: string,
+    authToken: string,
     hostIp: string,
     hostPort: number,
-    sessionId: string,
+    targetSession: string,
     instanceId: string,
   ): Promise<void> {
-    return invoke("join_game", { apiBaseUrl, accessToken, hostIp, hostPort, sessionId, instanceId });
+    return invoke("join_game", {
+      apiBaseUrl,
+      authToken,
+      hostIp,
+      hostPort,
+      targetSession,
+      instanceId,
+    });
   }
 
   static async httpProxyRequest(
     method: string,
     url: string,
     body: string | null,
-    headers: Record<string, string>
+    headers: Record<string, string>,
   ): Promise<{ status: number; body: string }> {
     return invoke("http_proxy_request", { method, url, body, headers });
   }
@@ -309,12 +386,21 @@ export class TauriService {
     return invoke("get_playtime", { instanceId });
   }
 
-  static async getPlaytimeDaily(instanceId: string, days: number): Promise<PlaytimeDayEntry[]> {
+  static async getPlaytimeDaily(
+    instanceId: string,
+    days: number,
+  ): Promise<PlaytimeDayEntry[]> {
     return invoke("get_playtime_daily", { instanceId, days });
   }
 
   static async getInstancePath(instanceId: string): Promise<string> {
     return invoke("get_instance_path", { instanceId });
+  }
+
+  static async getInstanceArgsSchema(
+    instanceId: string,
+  ): Promise<string | null> {
+    return invoke("get_instance_args_schema", { instanceId });
   }
 
   static async readScreenshotAsDataUrl(path: string): Promise<string> {
@@ -329,6 +415,46 @@ export class TauriService {
     return invoke("restore_instance");
   }
 
+  static async getPluginsDir(): Promise<string> {
+    return invoke("get_plugins_dir");
+  }
+
+  static async createPluginDir(pluginId: string): Promise<string> {
+    return invoke("create_plugin_dir", { pluginId });
+  }
+
+  static async removePluginDir(pluginId: string): Promise<void> {
+    return invoke("remove_plugin_dir", { pluginId });
+  }
+
+  static async listDirectory(
+    path: string,
+  ): Promise<Array<{ name: string; is_dir: boolean }>> {
+    return invoke("list_directory", { path });
+  }
+
+  static async listGitDirectory(
+    repoUrl: string,
+    branch: string,
+    path: string,
+  ): Promise<Array<{ name: string; is_dir: boolean }>> {
+    return invoke("list_git_directory", { repoUrl, branch, path });
+  }
+
+  static async downloadDlcFiles(
+    instanceId: string,
+    repoUrl: string,
+    branch: string,
+    dlcFolder: string,
+  ): Promise<void> {
+    return invoke("download_dlc_files", {
+      instanceId,
+      repoUrl,
+      branch,
+      dlcFolder,
+    });
+  }
+
   static async importWorld(
     inputPath: string,
     outputPath: string,
@@ -336,4 +462,36 @@ export class TauriService {
     return invoke("import_world", { inputPath, outputPath });
   }
 
+  static async importLceSave(
+    inputPath: string,
+    outputDir: string,
+  ): Promise<string> {
+    return invoke("import_lce_save", { inputPath, outputDir });
+  }
+
+  static async javaToLce(
+    javaWorldPath: string,
+    outputMsPath: string,
+  ): Promise<string> {
+    return invoke("java_to_lce", { javaWorldPath, outputMsPath });
+  }
+
+  static async lceToJava(
+    inputMsPath: string,
+    javaWorldOutput: string,
+  ): Promise<string> {
+    return invoke("lce_to_java", { inputMsPath, javaWorldOutput });
+  }
+
+  static async installLatestDriver(): Promise<void> {
+    return invoke("install_latest_driver");
+  }
+
+  static async switchProton(version: string): Promise<void> {
+    return invoke("switch_proton", { version });
+  }
+
+  static async setAudioBackend(backend: string): Promise<void> {
+    return invoke("set_audio_backend", { backend });
+  }
 }

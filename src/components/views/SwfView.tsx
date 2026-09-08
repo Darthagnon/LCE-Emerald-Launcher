@@ -178,7 +178,7 @@ export default function SwfView() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: animationsEnabled ? 0.3 : 0 }}
-      className="flex flex-col items-center w-full max-w-6xl h-[85vh] outline-none"
+      className="flex flex-col items-center w-full max-w-6xl h-full outline-none"
     >
       <div className="w-full flex justify-between items-center mb-4 px-8">
         <h2 className="text-2xl text-white mc-text-shadow border-b-2 border-[#373737] pb-1 tracking-widest uppercase font-bold">
@@ -229,9 +229,9 @@ export default function SwfView() {
                 <div
                   key={img.id}
                   onClick={() => { playPressSound(); setSelectedImageId(img.id); }}
-                  className={`flex items-center gap-3 p-3 cursor-pointer transition-all border-l-4 ${selectedImageId === img.id
+                  className={`flex items-center gap-3 p-3 cursor-pointer border-l-4 ${selectedImageId === img.id
                     ? "bg-[#FFFF55]/10 border-[#FFFF55] text-[#FFFF55]"
-                    : "border-transparent hover:bg-white/5 text-white/60 hover:text-white"
+                    : "border-transparent text-white/60"
                     }`}
                 >
                   <img src="/images/tools/arc.png" className={`w-5 h-5 object-contain ${selectedImageId === img.id ? "" : "grayscale"}`} style={{ imageRendering: "pixelated" }} />
@@ -308,7 +308,7 @@ export default function SwfView() {
 
       <button
         onClick={handleBack}
-        className="w-72 h-14 flex items-center justify-center transition-colors text-2xl mc-text-shadow mt-6 outline-none border-none hover:text-[#FFFF55] text-white"
+        className="w-72 h-14 shrink-0 flex items-center justify-center transition-colors text-2xl mc-text-shadow mt-6 outline-none border-none hover:text-[#FFFF55] text-white"
         style={{ backgroundImage: "url('/images/Button_Background.png')", backgroundSize: "100% 100%", imageRendering: "pixelated" }}
       >
         Back

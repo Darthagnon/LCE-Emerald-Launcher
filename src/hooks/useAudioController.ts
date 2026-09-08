@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { SPLASHES } from "../data/splashes";
 
 const TRACKS = [
+  "music/Moog City 2.opus",
   "music/Blind Spots.ogg",
   "music/Key.ogg",
   "music/Living Mice.ogg",
@@ -13,159 +15,10 @@ const resolveAudioUrl = (path: string) => {
   return new URL(relativePath, window.location.origin).href;
 };
 
-const SPLASHES = [
-  "Legacy is back!",
-  "Pixelated goodness!",
-  "Console Edition vibe!",
-  "100% Not Microsoft!",
-  "Symmetry is key!",
-  "Does anyone even read these?",
-  "Task failed successfully.",
-  "Hardware accelerated!",
-  "It's a feature, not a bug.",
-  "Look behind you.",
-  "Works on my machine.",
-  "Now gluten-free!",
-  "Mom, get the camera!",
-  "Batteries not included.",
-  "May contain nuts.",
-  "Press Alt+F4 for diamonds!",
-  "Downloading more RAM...",
-  "Reinventing the wheel!",
-  "The cake is a lie.",
-  "Powered by copious amounts of coffee.",
-  "I'm running out of ideas.",
-  "That's no moon...",
-  "Now with 100% more nostalgia!",
-  "Legacy is the new modern.",
-  "No microtransactions!",
-  "As seen on TV!",
-  "Ironic, isn't it?",
-  "Creeper? Aww man.",
-  "Technoblade never dies!",
-  "is smartcmd dead ?",
-  "NO BUILT IN MS AUTH !",
-  "Mr_Anilex wasn't here!",
-  "Who's Jack ?",
-  "This text is blue!",
-  "Bonjour!",
-  "Salam!",
-  "Reverse engineering Wii U version",
-  "Don't try Valorant!",
-  "This could never be a sad place!",
-  "Made without microslop",
-  "Thank you C418",
-  "Bread is pain",
-  "From the star!",
-  "Never gonna give you up!",
-  "9+10=21",
-  ".party() was successful",
-  "Not Kogama",
-  "You can be proud of you!",
-  "Let's drink Orange Joe",
-  "Kirater is a great singer!",
-  "Mirkette My beloved",
-  "Started in Bordeaux",
-  "Oui Oui Baguette",
-  "Milk In The Microwave",
-  "8-3: DISINTEGRATION LOOP",
-  "Turn the light OFF",
-  "Not written by Mr_Anilex",
-  "The One Who's Running the Show!",
-  "Playing Forever",
-  "The World looks cubic!",
-  "huh?",
-  "Sybau",
-  "Available on Toaster",
-  "Try ArchLinux",
-  "69% Accurate",
-  "A molecule of meow",
-  "http://localhost:3000",
-  "uuhhhh...",
-  "Oyasumi",
-  "I don't want to set the world on fire",
-  "Directed by Michael Bay",
-  "We see you, Opal!",
-  "A Cool Cat in Town",
-  "Not BrainRotted!",
-  "Farting is Natural -Leon",
-  "93/100 on metacritic",
-  "Not (anymore) on Steam",
-  "Sudo apt install EmeraldLauncher",
-  "Sudo pacman -S EmeraldLauncher",
-  "Kay-Chan my beloved! <3",
-  "Peak!",
-  "OpenSource!",
-  "made by human with bone and flesh",
-  "Made with hate against microslop",
-  "Steelorse :fire:",
-  "It's Minecraft but i'm not sure",
-  "Look at you!",
-  "You're beautiful",
-  "Mr_Anilex has a big ego",
-  "Traduis-moi !",
-  "May contains Mr_Anilex",
-  "Neoapps didn't write this splash",
-  "Where's Kinger?",
-  "KayJann, Breakcore and code",
-  "Hey Goku!",
-  "Vegeta is a DZ mashallah",
-  "Bogos Binted? Vorp",
-  "YOU SHALL NOT PASS !",
-  "Bready, Steady, GO !",
-  "Not-so-Empty-house",
-  "We'll Meet Again",
-  "idk",
-  "wdym",
-  "Not making sense",
-  "Dw!",
-  "i forgor",
-  "Remember to be patient!",
-  "NOW'S YOUR CHANCE TO BE A.",
-  "BIG SHOT",
-  "A burning memory",
-  "FREE MONEY!",
-  "Can You Really Call This A Hotel. I didn't Reveive A Mint On My Pillow Or Anything",
-  "Try Indie Game",
-  "SHARK WITH LEGS!",
-  "it's a seal!",
-  "Shrimp.",
-  "Limited edition!",
-  "Fat free!",
-  "GOTY!",
-  "Water proof!",
-  "LALALA-LAVA",
-  "CHICHICHI-CHICKEN",
-  "Tasty ah hell",
-  "1% sugar!",
-  "150% hyperbole!",
-  "Hotter than the sun!",
-  "Woo, reddit!",
-  "piebot was here!",
-  "Legacy in an evolved manner.",
-  "neoapps is cool!",
-  "neoapps has put a self insert into this program!",
-  "Also try neoLegacy!",
-  "$20 is $20",
-  "no RenderDragon!",
-  "Iggy Jiggy",
-  "Arch, btw!",
-  "Bedrock bad!",
-  "Bedrock Linux not bad",
-  "Also try Terraria!",
-  "Also try LC Launcher!",
-  "Exclusively abandonware!",
-  "100% legal in all 3 states (of matter)",
-  "Herobrine has been confirmed we are fighting him please help",
-  "LGTM",
-  "git revert",
-  "We do not crypto mine on your computer.",
-];
 
 interface AudioControllerProps {
   musicVol: number;
   sfxVol: number;
-  showIntro: boolean;
   isGameRunning: boolean;
   isWindowVisible: boolean;
 }
@@ -173,12 +26,13 @@ interface AudioControllerProps {
 export function useAudioController({
   musicVol,
   sfxVol,
-  showIntro,
   isGameRunning,
   isWindowVisible,
 }: AudioControllerProps) {
   const [currentTrack, setCurrentTrack] = useState(0);
-  const [splashIndex, setSplashIndex] = useState(-1);
+  const [splashIndex, setSplashIndex] = useState(
+    () => Math.floor(Math.random() * SPLASHES.length),
+  );
   const audioContextRef = useRef<AudioContext | null>(null);
   const musicSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const musicGainRef = useRef<GainNode | null>(null);
@@ -193,7 +47,7 @@ export function useAudioController({
     }
     return audioContextRef.current;
   }, []);
-
+  const isManualSkipRef = useRef(false);
   const ensureAudioContextReady = useCallback(async () => {
     const ctx = getAudioContext();
     if (ctx.state === "suspended") {
@@ -264,21 +118,16 @@ export function useAudioController({
     async (buffer: AudioBuffer, startTime: number = 0) => {
       const ctx = await ensureAudioContextReady();
       stopMusic();
-
       const source = ctx.createBufferSource();
       const gainNode = ctx.createGain();
-
       source.buffer = buffer;
       gainNode.gain.value = 0;
       source.connect(gainNode);
       gainNode.connect(ctx.destination);
-
       const offset = startTime % buffer.duration;
       source.start(0, offset);
-
       musicSourceRef.current = source;
       musicGainRef.current = gainNode;
-
       const steps = 5;
       const stepDuration = 100;
       let currentStep = 0;
@@ -296,11 +145,11 @@ export function useAudioController({
           }
         }
       }, stepDuration);
-
       source.onended = () => {
-        if (musicSourceRef.current) {
+        if (musicSourceRef.current && !isManualSkipRef.current) {
           setCurrentTrack((prev) => (prev + 1) % TRACKS.length);
         }
+        isManualSkipRef.current = false;
       };
     },
     [stopMusic, ensureAudioContextReady],
@@ -345,24 +194,19 @@ export function useAudioController({
     async (buffer: AudioBuffer, targetVolume: number, duration: number = 500) => {
       const ctx = await ensureAudioContextReady();
       stopMusic();
-
       const source = ctx.createBufferSource();
       const gainNode = ctx.createGain();
-
       source.buffer = buffer;
       gainNode.gain.value = 0;
       source.connect(gainNode);
       gainNode.connect(ctx.destination);
       source.start();
-
       musicSourceRef.current = source;
       musicGainRef.current = gainNode;
       targetVolumeRef.current = targetVolume;
-
       const steps = 5;
       const stepDuration = duration / steps;
       let currentStep = 0;
-
       fadeIntervalRef.current = window.setInterval(() => {
         currentStep++;
         const progress = currentStep / steps;
@@ -379,9 +223,10 @@ export function useAudioController({
       }, stepDuration);
 
       source.onended = () => {
-        if (musicSourceRef.current) {
+        if (musicSourceRef.current && !isManualSkipRef.current) {
           setCurrentTrack((prev) => (prev + 1) % TRACKS.length);
         }
+        isManualSkipRef.current = false;
       };
     },
     [stopMusic, ensureAudioContextReady],
@@ -395,11 +240,22 @@ export function useAudioController({
     } while (newIndex === splashIndex && SPLASHES.length > 1);
     setSplashIndex(newIndex);
   }, [playSplashSound, splashIndex]);
+  const skipTrack = useCallback(() => {
+    isManualSkipRef.current = true;
+    setCurrentTrack((prev) => (prev + 1) % TRACKS.length);
+  }, []);
+  const [isMusicStarted, setIsMusicStarted] = useState(false);
+
+  const startMusic = useCallback(() => {
+    setIsMusicStarted(true);
+  }, []);
 
   useEffect(() => {
-    if (showIntro) return;
+    if (!isMusicStarted) return;
 
     const loadAndPlay = async () => {
+      await ensureAudioContextReady();
+      
       let buffer = trackBuffersRef.current.get(currentTrack);
       if (!buffer) {
         buffer = await loadAudioBuffer(resolveAudioUrl(TRACKS[currentTrack]));
@@ -408,35 +264,16 @@ export function useAudioController({
         }
       }
       if (buffer) {
-        await playMusicBuffer(buffer);
-      }
-    };
-
-    loadAndPlay();
-
-    return () => {
-      stopMusic();
-    };
-  }, [showIntro, currentTrack, loadAudioBuffer, playMusicBuffer, stopMusic]);
-
-  useEffect(() => {
-    if (!audioContextRef.current || showIntro) return;
-
-    const loadAndPlay = async () => {
-      let buffer = trackBuffersRef.current.get(currentTrack);
-      if (!buffer) {
-        buffer = await loadAudioBuffer(resolveAudioUrl(TRACKS[currentTrack]));
-        if (buffer) {
-          trackBuffersRef.current.set(currentTrack, buffer);
+        if (currentTrack === 0) {
+          await playMusicBuffer(buffer);
+        } else {
+          await fadeInMusic(buffer, targetVolumeRef.current, 500);
         }
       }
-      if (buffer) {
-        await fadeInMusic(buffer, musicVol / 100, 500);
-      }
     };
 
     loadAndPlay();
-  }, [currentTrack, showIntro, musicVol, loadAudioBuffer, fadeInMusic]);
+  }, [isMusicStarted, currentTrack, loadAudioBuffer, playMusicBuffer, fadeInMusic, ensureAudioContextReady]);
 
   useEffect(() => {
     const shouldPause = isGameRunning || !isWindowVisible;
@@ -501,6 +338,7 @@ export function useAudioController({
   return {
     currentTrack,
     setCurrentTrack,
+    skipTrack,
     splashIndex,
     setSplashIndex,
     cycleSplash,
@@ -509,5 +347,6 @@ export function useAudioController({
     playSfx,
     tracks: TRACKS,
     splashes: SPLASHES,
+    startMusic,
   };
 }

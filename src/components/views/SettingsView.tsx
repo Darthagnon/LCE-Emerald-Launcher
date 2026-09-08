@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, memo } from "react";
+import { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
 import { motion } from "framer-motion";
 import { TauriService, Runner } from "../../services/TauriService";
 import { usePlatform } from "../../hooks/usePlatform";
@@ -8,6 +8,8 @@ import {
   useAudio,
   useGame,
 } from "../../context/LauncherContext";
+import { PluginManager, type PluginInfo } from "../../plugins/PluginManager";
+import { usePluginActions } from "../../plugins/PluginContext";
 
 const SettingsView = memo(function SettingsView() {
   const { setActiveView } = useUI();
@@ -21,13 +23,14 @@ const SettingsView = memo(function SettingsView() {
     sfxVol: sfxVolume,
     setSfxVol: setSfxVolume,
     layout,
-    setLayout,
     linuxRunner,
     setLinuxRunner,
     perfBoost,
     setPerfBoost,
     rpcEnabled,
     setRpcEnabled,
+    startFullscreen,
+    setStartFullscreen,
     legacyMode,
     setLegacyMode,
     mangohudEnabled,
@@ -38,14 +41,16 @@ const SettingsView = memo(function SettingsView() {
     setLaunchPrefix,
     launchEnvVars,
     setLaunchEnvVars,
+    skipIntro,
+    setSkipIntro,
+    profile,
+    androidRunner,
+    setAndroidRunner: _setAndroidRuntime,
+    androidAudioBackend,
+    setAndroidAudioBackend,
   } = useConfig();
-  const {
-    currentTrack,
-    setCurrentTrack,
-    tracks,
-    playPressSound,
-    playBackSound,
-  } = useAudio();
+  const { currentTrack, skipTrack, tracks, playPressSound, playBackSound } =
+    useAudio();
   const {
     isGameRunning,
     stopGame,
@@ -53,12 +58,14 @@ const SettingsView = memo(function SettingsView() {
     runnerDownloadProgress,
     downloadRunner,
   } = useGame();
-  const { isLinux, isMac } = usePlatform();
+  const { isLinux, isMac, isAndroid } = usePlatform();
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [currentSubMenu, setCurrentSubMenu] = useState<
-    "main" | "audio" | "video" | "controls" | "launcher" | "game"
+    "main" | "audio" | "video" | "launcher" | "game" | "plugins" | "android"
   >("main");
   const [runners, setRunners] = useState<Runner[]>([]);
+  const [pluginsInfo, setPluginsInfo] = useState<PluginInfo[]>([]);
+  const pluginSettingsActions = usePluginActions("settings-tab");
   const containerRef = useRef<HTMLDivElement>(null);
   const [argsInput, setArgsInput] = useState("");
   const [prefixInput, setPrefixInput] = useState("");
@@ -66,19 +73,21 @@ const SettingsView = memo(function SettingsView() {
   const [showModal, setShowModal] = useState<
     "args" | "prefix" | "envVars" | null
   >(null);
-
-  const layouts = ["KBM", "PLAYSTATION", "XBOX"];
-
+  //jandrozdz: Added so track doesn't skip forever after pressing once
+  const isSkippingRef = useRef(false);
   useEffect(() => {
     TauriService.getAvailableRunners().then(setRunners);
   }, [isRunnerDownloading]);
 
-  const handleLayoutToggle = () => {
-    playPressSound();
-    const currentIndex = layouts.indexOf(layout);
-    const nextIndex = (currentIndex + 1) % layouts.length;
-    setLayout(layouts[nextIndex]);
-  };
+  const refreshPlugins = useCallback(() => {
+    setPluginsInfo(PluginManager.instance.getPluginInfoList());
+  }, []);
+
+  useEffect(() => {
+    refreshPlugins();
+    PluginManager.instance.setEnabledChangedCallback(refreshPlugins);
+    return () => PluginManager.instance.setEnabledChangedCallback(null!);
+  }, [refreshPlugins]);
 
   const handleVfxToggle = () => {
     playPressSound();
@@ -100,6 +109,11 @@ const SettingsView = memo(function SettingsView() {
     setRpcEnabled(!rpcEnabled);
   };
 
+  const handleFullscreenToggle = () => {
+    playPressSound();
+    setStartFullscreen(!startFullscreen);
+  };
+
   const handleLegacyToggle = () => {
     playPressSound();
     setLegacyMode(!legacyMode);
@@ -108,6 +122,11 @@ const SettingsView = memo(function SettingsView() {
   const handleMangohudToggle = () => {
     playPressSound();
     setMangohudEnabled(!mangohudEnabled);
+  };
+
+  const handleSkipIntroToggle = () => {
+    playPressSound();
+    setSkipIntro(!skipIntro);
   };
 
   const handleRunnerToggle = () => {
@@ -119,8 +138,13 @@ const SettingsView = memo(function SettingsView() {
   };
 
   const handleTrackToggle = () => {
+    if (isSkippingRef.current) return;
     playPressSound();
-    setCurrentTrack((currentTrack + 1) % tracks.length);
+    isSkippingRef.current = true;
+    skipTrack(); //jandrozdz: Use skipTrack here
+    setTimeout(() => {
+      isSkippingRef.current = false;
+    }, 100);
   };
 
   const handleResetSetup = () => {
@@ -131,7 +155,7 @@ const SettingsView = memo(function SettingsView() {
       "fixed inset-0 bg-black/80 flex items-center justify-center z-50";
     dialog.innerHTML = `
       <div class="w-[420px] p-4 flex flex-col items-center mc-options-bg">
-        <h3 class="text-2xl font-bold text-[#333333] mb-4 text-left w-full px-4 mc-text-shadow">Reset Setup</h3>
+        <h3 class="text-2xl text-[#333333] mb-4 text-left w-full px-4 mc-text-shadow">Reset Setup</h3>
         <p class="text-[#333333] mb-8 text-left w-full px-4">Are you sure you want to reset launcher setup?</p>
         <div class="flex flex-col gap-3 w-full px-4">
           <button id="reset-cancel" class="w-full h-10 flex items-center justify-center text-lg mc-text-shadow text-white hover:text-[#ffff00]" style="background-image: url('/images/Button_Background.png'); background-size: 100% 100%; image-rendering: pixelated; border: none; cursor: pointer;" onmouseenter="this.style.backgroundImage='url(/images/button_highlighted.png)'" onmouseleave="this.style.backgroundImage='url(/images/Button_Background.png)'">Cancel</button>
@@ -169,7 +193,7 @@ const SettingsView = memo(function SettingsView() {
       "fixed inset-0 bg-black/80 flex items-center justify-center z-50";
     dialog.innerHTML = `
       <div class="w-[420px] p-4 flex flex-col items-center mc-options-bg">
-        <h3 class="text-2xl font-bold text-[#333333] mb-2 text-left w-full px-4 mc-text-shadow">CONFIRM RESET</h3>
+        <h3 class="text-2xl text-[#333333] mb-2 text-left w-full px-4 mc-text-shadow">CONFIRM RESET</h3>
         <div class="text-[#333333] mb-6 text-left w-full px-4">
           <p class="mb-2">⚠️ This will:</p>
           <ul class="list-none space-y-1 text-sm">
@@ -178,7 +202,7 @@ const SettingsView = memo(function SettingsView() {
             <li>Show setup screen again</li>
             <li>Require reconfiguration</li>
           </ul>
-          <p class="mt-3 text-[#333333] font-bold">This action cannot be undone!</p>
+          <p class="mt-3 text-[#333333]">This action cannot be undone!</p>
         </div>
         <div class="flex flex-col gap-3 w-full px-4">
           <button id="reset-final-cancel" class="w-full h-10 flex items-center justify-center text-lg mc-text-shadow text-white hover:text-[#ffff00]" style="background-image: url('/images/Button_Background.png'); background-size: 100% 100%; image-rendering: pixelated; border: none; cursor: pointer;" onmouseenter="this.style.backgroundImage='url(/images/button_highlighted.png)'" onmouseleave="this.style.backgroundImage='url(/images/Button_Background.png)'">Cancel</button>
@@ -275,16 +299,6 @@ const SettingsView = memo(function SettingsView() {
         },
       });
       items.push({
-        id: "controls_menu",
-        label: "Controls",
-        type: "button",
-        onClick: () => {
-          playPressSound();
-          setCurrentSubMenu("controls");
-          setFocusIndex(0);
-        },
-      });
-      items.push({
         id: "launcher_menu",
         label: "Launcher",
         type: "button",
@@ -302,6 +316,48 @@ const SettingsView = memo(function SettingsView() {
           playPressSound();
           setCurrentSubMenu("game");
           setFocusIndex(0);
+        },
+      });
+      items.push({
+        id: "plugins_menu",
+        label: "Plugins",
+        type: "button",
+        onClick: () => {
+          playPressSound();
+          setCurrentSubMenu("plugins");
+          setFocusIndex(0);
+        },
+      });
+      if (isAndroid) {
+        items.push({
+          id: "android_menu",
+          label: "Android",
+          type: "button",
+          onClick: () => {
+            playPressSound();
+            setCurrentSubMenu("android");
+            setFocusIndex(0);
+          },
+        });
+      }
+      for (const action of pluginSettingsActions) {
+        items.push({
+          id: action.id,
+          label: action.label,
+          type: "button",
+          onClick: () => {
+            playPressSound();
+            action.onClick();
+          },
+        });
+      }
+      items.push({
+        id: "credits",
+        label: "Credits",
+        type: "button",
+        onClick: () => {
+          playPressSound();
+          setActiveView("credits");
         },
       });
     } else if (currentSubMenu === "audio") {
@@ -346,13 +402,6 @@ const SettingsView = memo(function SettingsView() {
           onClick: handlePerfToggle,
         });
       }
-    } else if (currentSubMenu === "controls") {
-      items.push({
-        id: "layout",
-        label: `Layout: ${layout}`,
-        type: "button",
-        onClick: handleLayoutToggle,
-      });
     } else if (currentSubMenu === "game") {
       const envVarsCount = launchEnvVars
         ? Object.keys(launchEnvVars).length
@@ -396,11 +445,25 @@ const SettingsView = memo(function SettingsView() {
         },
       });
     } else if (currentSubMenu === "launcher") {
+      if (!isAndroid) {
+        items.push({
+          id: "fullscreen",
+          label: `Start in Fullscreen: ${startFullscreen ? "ON" : "OFF"}`,
+          type: "button",
+          onClick: handleFullscreenToggle,
+        });
+        items.push({
+          id: "rpc",
+          label: `Discord RPC: ${rpcEnabled ? "ON" : "OFF"}`,
+          type: "button",
+          onClick: handleRpcToggle,
+        });
+      }
       items.push({
-        id: "rpc",
-        label: `Discord RPC: ${rpcEnabled ? "ON" : "OFF"}`,
+        id: "skip_intro",
+        label: `Skip Intro: ${skipIntro ? "ON" : "OFF"}`,
         type: "button",
-        onClick: handleRpcToggle,
+        onClick: handleSkipIntroToggle,
       });
       items.push({
         id: "legacy",
@@ -408,7 +471,7 @@ const SettingsView = memo(function SettingsView() {
         type: "button",
         onClick: handleLegacyToggle,
       });
-      if (isLinux) {
+      if (isLinux && !isAndroid) {
         items.push({
           id: "runner",
           label: `Runner: ${selectedRunnerName}`,
@@ -439,38 +502,95 @@ const SettingsView = memo(function SettingsView() {
         });
       }
 
-      items.push({
-        id: "export_settings",
-        label: "Export Settings",
-        type: "button",
-        onClick: async () => {
-          playPressSound();
-          try {
-            await TauriService.exportSettings();
-          } catch (e) {
-            if (e !== "CANCELED") console.error(e);
-          }
-        },
-      });
-      items.push({
-        id: "import_settings",
-        label: "Import Settings",
-        type: "button",
-        onClick: async () => {
-          playPressSound();
-          try {
-            await TauriService.importSettings();
-          } catch (e) {
-            if (e !== "CANCELED") console.error(e);
-          }
-        },
-      });
+      if (!isAndroid) {
+        items.push({
+          id: "export_settings",
+          label: "Export Settings",
+          type: "button",
+          onClick: async () => {
+            playPressSound();
+            try {
+              await TauriService.exportSettings();
+            } catch (e) {
+              if (e !== "CANCELED") console.error(e);
+            }
+          },
+        });
+      }
+      if (!isAndroid) {
+        items.push({
+          id: "import_settings",
+          label: "Import Settings",
+          type: "button",
+          onClick: async () => {
+            playPressSound();
+            try {
+              await TauriService.importSettings();
+              window.location.reload();
+            } catch (e) {
+              if (e !== "CANCELED") console.error(e);
+            }
+          },
+        });
+      }
       items.push({
         id: "reset_setup",
         label: "Reset Setup",
         type: "button",
         onClick: handleResetSetup,
         color: "orange",
+      });
+    } else if (currentSubMenu === "android") {
+      if (profile) {
+        items.push({
+          id: "android_container_settings",
+          label: "Container Settings",
+          type: "button",
+          onClick: () => {
+            playPressSound();
+            TauriService.openContainerSettings(profile).catch(console.error);
+          },
+        });
+        items.push({
+          id: "android_open_container",
+          label: "Open Container",
+          type: "button",
+          onClick: () => {
+            playPressSound();
+            TauriService.openInstanceFolder(profile).catch(console.error);
+          },
+        });
+      }
+      /*items.push({
+        id: "android_proton",
+        label: `Proton: ${androidRunner === "proton10" ? "Proton 10" : "Proton 11 (Default)"}`,
+        type: "button",
+        onClick: () => {
+          playPressSound();
+          const next = androidRunner === "proton10" ? "proton11" : "proton10";
+          setAndroidRunner(next);
+          TauriService.switchProton(next).catch(console.error);
+        },
+      });
+      items.push({
+        id: "android_install_driver",
+        label: "Install Latest Driver",
+        type: "button",
+        onClick: () => {
+          playPressSound();
+          TauriService.installLatestDriver().catch(console.error);
+        },
+        });*/
+      items.push({
+        id: "android_audio",
+        label: `Audio: ${androidAudioBackend === "alsa" ? "ALSA" : "PulseAudio (Default)"}`,
+        type: "button",
+        onClick: () => {
+          playPressSound();
+          const next = androidAudioBackend === "alsa" ? "pulseaudio" : "alsa";
+          setAndroidAudioBackend(next);
+          TauriService.setAudioBackend(next).catch(console.error);
+        },
       });
     }
 
@@ -502,6 +622,7 @@ const SettingsView = memo(function SettingsView() {
     return items;
   }, [
     currentSubMenu,
+    pluginSettingsActions,
     musicVolume,
     sfxVolume,
     trackName,
@@ -511,6 +632,7 @@ const SettingsView = memo(function SettingsView() {
     animationsEnabled,
     layout,
     isLinux,
+    isAndroid,
     mangohudEnabled,
     selectedRunnerName,
     isRunnerDownloading,
@@ -523,10 +645,10 @@ const SettingsView = memo(function SettingsView() {
     handleRpcToggle,
     handleLegacyToggle,
     handleAnimationsToggle,
-    handleLayoutToggle,
     handleRunnerToggle,
     handlePerfToggle,
     handleMangohudToggle,
+    handleSkipIntroToggle,
     handleResetSetup,
     stopGame,
     downloadRunner,
@@ -537,6 +659,10 @@ const SettingsView = memo(function SettingsView() {
     extraLaunchArgs,
     launchPrefix,
     launchEnvVars,
+    skipIntro,
+    profile,
+    androidRunner,
+    androidAudioBackend,
   ]);
 
   useEffect(() => {
@@ -639,24 +765,24 @@ const SettingsView = memo(function SettingsView() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: animationsEnabled ? 0.3 : 0 }}
-      className="flex flex-col items-center w-full max-w-3xl outline-none"
+      className="flex flex-col items-center w-full max-w-5xl outline-none"
     >
-      <h2 className="text-2xl text-white mc-text-shadow mt-2 mb-4 border-b-2 border-[#373737] pb-2 w-[40%] max-w-[200px] text-center tracking-widest uppercase opacity-80 font-bold whitespace-nowrap px-4">
+      <h2 className="text-2xl text-white mc-text-shadow mt-2 mb-4 border-b-2 border-[#373737] pb-2 w-[40%] max-w-[200px] text-center tracking-widest uppercase opacity-80 whitespace-nowrap px-4">
         {currentSubMenu === "main"
           ? "Settings"
           : currentSubMenu === "audio"
             ? "Audio"
             : currentSubMenu === "video"
               ? "Video"
-              : currentSubMenu === "controls"
-                ? "Controls"
-                : currentSubMenu === "game"
-                  ? "Game"
+              : currentSubMenu === "game"
+                ? "Game"
+                : currentSubMenu === "plugins"
+                  ? "Plugins"
                   : "Launcher"}
       </h2>
 
       {currentSubMenu === "main" ? (
-        <div className="w-full max-w-[540px] space-y-2 mb-4 p-6 flex flex-col items-center overflow-y-auto max-h-[55vh]">
+        <div className="w-full max-w-[680px] space-y-2 mb-4 p-6 flex flex-col items-center overflow-y-auto max-h-[55vh] settings-scrollbar">
           {settingsItems.map((item, index) => {
             if (item.id === "back") return null;
 
@@ -667,7 +793,7 @@ const SettingsView = memo(function SettingsView() {
                   data-index={index}
                   tabIndex={0}
                   onMouseEnter={() => setFocusIndex(index)}
-                  className="relative w-[360px] h-10 flex items-center justify-center cursor-pointer transition-all outline-none border-none hover:text-[#ffff00] shrink-0"
+                  className="relative w-[480px] h-10 flex items-center justify-center cursor-pointer transition-all outline-none border-none hover:text-[#ffff00] shrink-0"
                   style={getSliderStyle(index)}
                 >
                   <span
@@ -702,7 +828,7 @@ const SettingsView = memo(function SettingsView() {
                 data-index={index}
                 onMouseEnter={() => setFocusIndex(index)}
                 onClick={item.onClick}
-                className={`w-[360px] h-10 flex items-center justify-center px-4 relative z-30 transition-colors outline-none border-none shrink-0 ${
+                className={`w-[480px] h-10 flex items-center justify-center px-4 relative z-30 transition-colors outline-none border-none shrink-0 ${
                   isRed
                     ? focusIndex === index
                       ? "text-red-400"
@@ -722,12 +848,79 @@ const SettingsView = memo(function SettingsView() {
             );
           })}
         </div>
+      ) : currentSubMenu === "plugins" ? (
+        <div className="min-w-[640px] w-fit p-4 flex flex-col items-center mc-options-bg">
+          <div className="w-full space-y-3 flex flex-col items-center overflow-y-auto max-h-[50vh] py-2 settings-scrollbar">
+            {pluginsInfo.length === 0 ? (
+              <div className="text-[#888888] text-lg mc-text-shadow py-8">
+                No plugins installed
+              </div>
+            ) : (
+              pluginsInfo.map((p, index) => {
+                const isFocused = focusIndex === index;
+                return (
+                  <div
+                    key={p.manifest.id}
+                    data-index={index}
+                    onMouseEnter={() => setFocusIndex(index)}
+                    className={`w-[600px] flex items-center gap-3 px-4 py-3 cursor-pointer outline-none border-none ${
+                      isFocused ? "text-[#ffff00]" : "text-[#FFFFFF]"
+                    }`}
+                    style={{
+                      backgroundImage: "url('/images/Button_Background2.png')",
+                      backgroundSize: "100% 100%",
+                      imageRendering: "pixelated",
+                    }}
+                    onClick={() => {
+                      playPressSound();
+                      PluginManager.instance.setPluginEnabled(
+                        p.manifest.id,
+                        !p.enabled,
+                      );
+                    }}
+                  >
+                    <div className="relative w-6 h-6 shrink-0 flex items-center justify-center">
+                      <img
+                        src={
+                          isFocused
+                            ? "/images/checkbox_highlighted.png"
+                            : "/images/checkbox.png"
+                        }
+                        alt="checkbox"
+                        className="absolute inset-0 w-full h-full object-contain"
+                        style={{ imageRendering: "pixelated" }}
+                      />
+                      {p.enabled && (
+                        <img
+                          src="/images/check.png"
+                          alt="checked"
+                          className="relative z-10 w-6 h-6 object-contain"
+                          style={{ imageRendering: "pixelated" }}
+                        />
+                      )}
+                    </div>
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <span className="text-lg mc-text-shadow truncate">
+                        {p.manifest.name}
+                      </span>
+                      <span className="text-xs mc-text-shadow opacity-70 truncate">
+                        {p.manifest.description}
+                      </span>
+                      <span className="text-xs mc-text-shadow opacity-50">
+                        by {p.manifest.author} &middot; v{p.manifest.version}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
       ) : (
-        <div className="min-w-[420px] w-fit p-4 flex flex-col items-center mc-options-bg">
-          <div className="w-full space-y-3 flex flex-col items-center overflow-y-auto max-h-[50vh] py-2">
+        <div className="min-w-[640px] w-fit p-4 flex flex-col items-center mc-options-bg">
+          <div className="w-full space-y-3 flex flex-col items-center overflow-y-auto max-h-[50vh] py-2 settings-scrollbar">
             {settingsItems.map((item, index) => {
               if (item.id === "back") return null;
-
               if (item.type === "slider") {
                 return (
                   <div
@@ -735,7 +928,7 @@ const SettingsView = memo(function SettingsView() {
                     data-index={index}
                     tabIndex={0}
                     onMouseEnter={() => setFocusIndex(index)}
-                    className="relative w-[360px] h-10 flex items-center justify-center cursor-pointer transition-all outline-none border-none hover:text-[#ffff00] shrink-0"
+                    className="relative w-[600px] h-10 flex items-center justify-center cursor-pointer transition-all outline-none border-none hover:text-[#ffff00] shrink-0"
                     style={getSliderStyle(index)}
                   >
                     <span
@@ -772,10 +965,10 @@ const SettingsView = memo(function SettingsView() {
                   data-index={index}
                   onMouseEnter={() => setFocusIndex(index)}
                   onClick={item.onClick}
-                  className={`w-[360px] h-10 flex items-center pl-1.5 pr-4 relative z-30 outline-none border-none shrink-0 rounded ${focusIndex === index ? "text-[#ffff00]" : isRed ? "text-red-600" : "text-[#333333]"}`}
+                  className={`w-[600px] h-10 flex items-center pl-1.5 pr-4 relative z-30 outline-none border-none shrink-0 rounded ${focusIndex === index ? "text-[#ffff00]" : isRed ? "text-red-600" : "text-[#333333]"}`}
                 >
                   {isToggle && (
-                    <div className="relative w-6 h-6 mr-3 shrink-0">
+                    <div className="relative w-6 h-6 mr-3 shrink-0 flex items-center justify-center">
                       <img
                         src={
                           focusIndex === index
@@ -783,14 +976,14 @@ const SettingsView = memo(function SettingsView() {
                             : "/images/checkbox.png"
                         }
                         alt="checkbox"
-                        className="w-full h-full object-contain"
+                        className="absolute inset-0 w-full h-full object-contain"
                         style={{ imageRendering: "pixelated" }}
                       />
                       {toggleState && (
                         <img
                           src="/images/check.png"
                           alt="checked"
-                          className="absolute inset-0 w-full h-full object-contain"
+                          className="relative z-10 w-6 h-6 object-contain"
                           style={{ imageRendering: "pixelated" }}
                         />
                       )}
@@ -808,30 +1001,31 @@ const SettingsView = memo(function SettingsView() {
         </div>
       )}
 
-      {(() => {
-        const backIndex = settingsItems.findIndex((i) => i.id === "back");
-        const backItem = settingsItems[backIndex];
-        if (!backItem || backItem.type !== "button") return null;
+      {!isAndroid &&
+        (() => {
+          const backIndex = settingsItems.findIndex((i) => i.id === "back");
+          const backItem = settingsItems[backIndex];
+          if (!backItem || backItem.type !== "button") return null;
 
-        return (
-          <button
-            data-index={backIndex}
-            onMouseEnter={() => setFocusIndex(backIndex)}
-            onClick={backItem.onClick}
-            className={`w-40 h-10 flex items-center justify-center transition-colors text-xl mc-text-shadow outline-none border-none hover:text-[#ffff00] mt-4 ${focusIndex === backIndex ? "text-[#ffff00]" : "text-white"}`}
-            style={{
-              backgroundImage:
-                focusIndex === backIndex
-                  ? "url('/images/button_highlighted.png')"
-                  : "url('/images/Button_Background.png')",
-              backgroundSize: "100% 100%",
-              imageRendering: "pixelated",
-            }}
-          >
-            Back
-          </button>
-        );
-      })()}
+          return (
+            <button
+              data-index={backIndex}
+              onMouseEnter={() => setFocusIndex(backIndex)}
+              onClick={backItem.onClick}
+              className={`w-40 h-10 flex items-center justify-center transition-colors text-xl mc-text-shadow outline-none border-none hover:text-[#ffff00] mt-4 ${focusIndex === backIndex ? "text-[#ffff00]" : "text-white"}`}
+              style={{
+                backgroundImage:
+                  focusIndex === backIndex
+                    ? "url('/images/button_highlighted.png')"
+                    : "url('/images/Button_Background.png')",
+                backgroundSize: "100% 100%",
+                imageRendering: "pixelated",
+              }}
+            >
+              Back
+            </button>
+          );
+        })()}
 
       {showModal === "args" && (
         <motion.div

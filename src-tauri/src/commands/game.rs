@@ -1,8 +1,14 @@
 use std::fs;
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
+use tokio::sync::Mutex;
 use crate::commands::runners;
 use crate::config;
 use crate::types::AppConfig;
@@ -21,15 +27,62 @@ pub async fn launch_game(
     app: AppHandle,
     state: State<'_, GameState>,
     instance_id: String,
+    servers: Vec<McServer>,
+    mut extra_args: Vec<String>,
+) -> Result<(), String> {
+    extra_args.extend(load_instance_args(&app, &instance_id));
+    #[cfg(target_os = "android")]
+    {
+        let _ = state;
+        let mut servers = servers;
+        let working_dir = util::get_instance_working_dir(&app, &instance_id);
+        if !working_dir.join("Minecraft.Client.exe").exists() {
+            return Err("Game executable not found in instance folder.".into());
+        }
+
+        let config_val = config::load_config_raw(app.clone());
+        let lce_online = McServer { name: "LCEOnline Game".into(), ip: "127.0.0.1".into(), port: 61000 };
+        if !servers.iter().any(|s| s.ip == lce_online.ip && s.port == lce_online.port) {
+            servers.push(lce_online);
+        }
+        if let Some(ref saved) = config_val.saved_servers {
+            for s in saved {
+                if !servers.iter().any(|existing| existing.ip == s.ip && existing.port == s.port) {
+                    servers.push(s.clone());
+                }
+            }
+        }
+        ensure_server_list(&working_dir, servers);
+
+        let result = crate::android_runtime::launch_bridge(
+            working_dir.to_string_lossy().to_string(),
+            crate::android_runtime::BridgeAction::Play,
+            extra_args,
+        );
+        if result.is_ok() {
+            playtime::start_session(&app, &instance_id);
+        }
+        result
+    }
+    #[cfg(not(target_os = "android"))]
+    launch_game_desktop(app, state, instance_id, servers, extra_args).await
+}
+
+#[cfg(not(target_os = "android"))]
+async fn launch_game_desktop(
+    app: AppHandle,
+    state: State<'_, GameState>,
+    instance_id: String,
     mut servers: Vec<McServer>,
     extra_args: Vec<String>,
 ) -> Result<(), String> {
+    state.manual_stop.store(false, Ordering::SeqCst);
     perform_instance_sync(&app, &instance_id).await?;
     let working_dir = util::get_instance_working_dir(&app, &instance_id);
     let config_val = config::load_config_raw(app.clone());
-    let lce_live = McServer { name: "LCELive Game".into(), ip: "127.0.0.1".into(), port: 61000 };
-    if !servers.iter().any(|s| s.ip == lce_live.ip && s.port == lce_live.port) {
-        servers.push(lce_live);
+    let lce_online = McServer { name: "LCEOnline Game".into(), ip: "127.0.0.1".into(), port: 61000 };
+    if !servers.iter().any(|s| s.ip == lce_online.ip && s.port == lce_online.port) {
+        servers.push(lce_online);
     }
     if let Some(ref saved) = config_val.saved_servers {
         for s in saved {
@@ -39,8 +92,7 @@ pub async fn launch_game(
         }
     }
     ensure_server_list(&working_dir, servers);
-
-    let ws_cancel = workshop_server::start().await;
+    let ws_cancel = workshop_server::start(app.clone()).await;
     let _ws_guard = workshop_server::Guard::new(ws_cancel.clone());
     {
         let mut lock = state.workshop_cancel.lock().await;
@@ -118,42 +170,18 @@ pub async fn launch_game(
 
                 apply_launch_env_vars(&mut cmd, &config_val);
                 cmd.current_dir(&working_dir);
+                cmd.env("WINEDEBUG", "+debugstr");
                 let playtime_start = std::time::Instant::now();
-                let child = cmd.spawn().map_err(|e| e.to_string())?;
-                {
-                    let mut lock = state.child.lock().await;
-                    *lock = Some(child);
-                }
-
-                let status = loop {
-                    {
-                        let mut lock = state.child.lock().await;
-                        if let Some(ref mut c) = *lock {
-                            if let Some(s) = c.try_wait().map_err(|e| e.to_string())? {
-                                break s;
-                            }
-                        } else {
-                            return Ok(());
-                        }
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                let Some(result) = run_game_and_capture(&state, cmd).await? else {
+                    return Ok(());
                 };
-
-                {
-                    let mut lock = state.child.lock().await;
-                    *lock = None;
-                }
 
                 let duration = playtime_start.elapsed();
                 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
                 let start = now - duration.as_secs();
                 playtime::record_session(&app, &instance_id, start, now);
 
-                return if status.success() || status.code() == Some(253) || status.code() == Some(96) {
-                    Ok(())
-                } else {
-                    Err(format!("Game exited with status: {}", status))
-                };
+                return handle_game_exit(&app, &state, result);
             }
         }
         Err("No Linux runner selected in settings.".into())
@@ -173,9 +201,15 @@ pub async fn launch_game(
             let gptk_no_hud = macos::find_executable_recursive(&toolkit_dir, "gameportingtoolkit-no-hud")
                 .or_else(|| macos::find_executable_recursive(&toolkit_dir, "gameportingtoolkit"));
 
-            let wine_binary = macos::find_executable_recursive(&toolkit_dir, "wine64")
-                .or_else(|| macos::find_executable_recursive(&toolkit_dir, "wine"))
-                .ok_or_else(|| "Unable to locate wine binary inside runtime.".to_string())?;
+            let is_intel = std::env::consts::ARCH == "x86_64";
+            let wine_binary = if is_intel {
+                macos::find_executable_recursive(&toolkit_dir, "wine")
+                    .or_else(|| macos::find_executable_recursive(&toolkit_dir, "wine64"))
+            } else {
+                macos::find_executable_recursive(&toolkit_dir, "wine64")
+                    .or_else(|| macos::find_executable_recursive(&toolkit_dir, "wine"))
+            }
+            .ok_or_else(|| "Unable to locate wine binary inside runtime.".to_string())?;
 
             let wine_bin_dir = wine_binary
                 .parent()
@@ -208,7 +242,7 @@ pub async fn launch_game(
             apply_launch_env_vars(&mut cmd, &config_val);
             cmd.current_dir(&working_dir);
             cmd.env("WINEPREFIX", &prefix_dir);
-            cmd.env("WINEDEBUG", "-all");
+            cmd.env("WINEDEBUG", "+debugstr");
             let perf_boost = config_val.apple_silicon_performance_boost.unwrap_or(false);
             if perf_boost {
                 #[cfg(target_arch = "aarch64")]
@@ -234,49 +268,26 @@ pub async fn launch_game(
                     std::env::var("PATH").unwrap_or_default()
                 ),
             );
-            cmd.stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
+            cmd.stdin(std::process::Stdio::null());
 
             let playtime_start = std::time::Instant::now();
-            let child = cmd.spawn().map_err(|e| e.to_string())?;
-            {
-                let mut lock = state.child.lock().await;
-                *lock = Some(child);
-            }
-
-            let status = loop {
-                {
-                    let mut lock = state.child.lock().await;
-                    if let Some(ref mut c) = *lock {
-                        if let Some(s) = c.try_wait().map_err(|e| e.to_string())? {
-                            break s;
-                        }
-                    } else {
-                        return Ok(());
-                    }
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            let Some(result) = run_game_and_capture(&state, cmd).await? else {
+                return Ok(());
             };
-
-            {
-                let mut lock = state.child.lock().await;
-                *lock = None;
-            }
 
             let duration = playtime_start.elapsed();
             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
             let start = now - duration.as_secs();
             playtime::record_session(&app, &instance_id, start, now);
 
-            return if status.success() || status.code() == Some(253) || status.code() == Some(96) {
-                Ok(())
-            } else {
-                Err(format!("Game exited with status: {}", status))
-            };
+            return handle_game_exit(&app, &state, result);
         }
 
-        #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+        #[cfg(all(
+            not(target_os = "macos"),
+            not(target_os = "linux"),
+            not(target_os = "android")
+        ))]
         {
             let exe_str = game_exe.to_string_lossy().to_string();
             let all_args: Vec<String> = extra_args.clone();
@@ -290,37 +301,14 @@ pub async fn launch_game(
             apply_launch_env_vars(&mut cmd, &config_val);
             cmd.current_dir(&working_dir);
             let playtime_start = std::time::Instant::now();
-            let child = cmd.spawn().map_err(|e| e.to_string())?;
-            {
-                let mut lock = state.child.lock().await;
-                *lock = Some(child);
-            }
-            let status = loop {
-                {
-                    let mut lock = state.child.lock().await;
-                    if let Some(ref mut c) = *lock {
-                        if let Some(s) = c.try_wait().map_err(|e| e.to_string())? {
-                            break s;
-                        }
-                    } else {
-                        return Ok(());
-                    }
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            let Some(result) = run_game_and_capture(&state, cmd).await? else {
+                return Ok(());
             };
-            {
-                let mut lock = state.child.lock().await;
-                *lock = None;
-            }
             let duration = playtime_start.elapsed();
             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
             let start = now - duration.as_secs();
             playtime::record_session(&app, &instance_id, start, now);
-            return if status.success() || status.code() == Some(253) || status.code() == Some(96) {
-                Ok(())
-            } else {
-                Err(format!("Game exited with status: {}", status))
-            };
+            return handle_game_exit(&app, &state, result);
         }
     }
 }
@@ -331,6 +319,7 @@ pub async fn stop_game(
     instance_id: String,
     state: State<'_, GameState>,
 ) -> Result<(), String> {
+    state.manual_stop.store(true, Ordering::SeqCst);
     let mut lock = state.child.lock().await;
     if let Some(mut child) = lock.take() {
         #[cfg(unix)]
@@ -358,8 +347,39 @@ pub fn check_game_installed(app: AppHandle, instance_id: String) -> bool {
 #[allow(non_snake_case)]
 pub fn open_instance_folder(app: AppHandle, instance_id: String) {
     let folder = util::get_instance_working_dir(&app, &instance_id);
-    if folder.exists() {
-        let _ = app.opener().open_path(folder.to_str().unwrap(), None::<&str>);
+    #[cfg(target_os = "android")]
+    {
+        let _ = std::fs::create_dir_all(&folder);
+        let _ = crate::android_runtime::launch_bridge(
+            folder.to_string_lossy().to_string(),
+            crate::android_runtime::BridgeAction::OpenContainer,
+            Vec::new(),
+        );
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        if folder.exists() {
+            let _ = app.opener().open_path(folder.to_str().unwrap(), None::<&str>);
+        }
+    }
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn open_container_settings(app: AppHandle, instance_id: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let folder = util::get_instance_working_dir(&app, &instance_id);
+        crate::android_runtime::launch_bridge(
+            folder.to_string_lossy().to_string(),
+            crate::android_runtime::BridgeAction::OpenSettings,
+            Vec::new(),
+        )
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, instance_id);
+        Err("Only supported on Android".into())
     }
 }
 
@@ -372,6 +392,11 @@ pub fn delete_instance(app: AppHandle, instance_id: String) -> Result<(), String
             if edition.path.is_some() {
                 return Ok(());
             }
+        }
+    }
+    if let Some(ref custom_paths) = config_val.custom_paths {
+        if custom_paths.contains_key(&instance_id) {
+            return Ok(());
         }
     }
     let dir = util::get_app_dir(&app).join("instances").join(&instance_id);
@@ -393,6 +418,21 @@ pub fn get_instance_path(app: AppHandle, instance_id: String) -> String {
         .to_string()
 }
 
+fn load_instance_args(app: &AppHandle, instance_id: &str) -> Vec<String> {
+    let config_val = config::load_config_raw(app.clone());
+    config_val
+        .instance_launch_args
+        .and_then(|m| m.get(instance_id).cloned())
+        .map(|entry| entry.args)
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn get_instance_args_schema(app: AppHandle, instance_id: String) -> Option<String> {
+    let dir = util::get_instance_working_dir(&app, &instance_id);
+    fs::read_to_string(dir.join("Arguments.Schema.json")).ok()
+}
+
 #[tauri::command]
 pub fn get_playtime(app: AppHandle, instance_id: String) -> PlaytimeResponse {
     playtime::get_playtime(&app, &instance_id)
@@ -403,6 +443,7 @@ pub fn get_playtime_daily(app: AppHandle, instance_id: String, days: u64) -> Vec
     playtime::get_playtime_daily(&app, &instance_id, days)
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub fn backup_instance(app: AppHandle, instance_id: String) -> Result<(), String> {
     let instance_dir = util::get_instance_working_dir(&app, &instance_id);
@@ -436,6 +477,7 @@ pub fn backup_instance(app: AppHandle, instance_id: String) -> Result<(), String
     }
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub fn restore_instance(app: AppHandle) -> Result<String, String> {
     let file = rfd::FileDialog::new()
@@ -584,6 +626,7 @@ fn perform_dlc_sync(app: &AppHandle, instance_dir: &PathBuf) -> Result<(), Strin
                         } else {
                             fs::copy(entry.path(), &dest_path).map(|_| ())
                         } {
+                            let _ = app.emit("backend-error", format!("DLC Sync: Failed to copy {:?}: {}", entry.path(), e));
                             eprintln!("[DLC Sync] Failed to copy {:?} to {:?}: {}", entry.path(), dest_path, e);
                         } else {
                             println!("[DLC Sync] Copied to {:?}", dest_path);
@@ -626,6 +669,102 @@ fn apply_launch_env_vars(cmd: &mut tokio::process::Command, config: &AppConfig) 
     }
 }
 
+const MAX_LOG_BYTES: usize = 1024 * 1024;
+struct GameRunResult {
+    log: String,
+    exit_code: i32,
+}
+
+fn spawn_log_reader<R>(mut reader: R, log: Arc<Mutex<Vec<u8>>>) -> tokio::task::JoinHandle<()> where R: AsyncRead + Unpin + Send + 'static, {
+    tokio::spawn(async move {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let mut guard = log.lock().await;
+                    guard.extend_from_slice(&buf[..n]);
+                    if guard.len() > MAX_LOG_BYTES {
+                        let remove = guard.len() - MAX_LOG_BYTES;
+                        guard.drain(..remove);
+                    }
+                }
+            }
+        }
+    })
+}
+
+async fn run_game_and_capture(
+    state: &State<'_, GameState>,
+    mut cmd: tokio::process::Command,
+) -> Result<Option<GameRunResult>, String> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut handles = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        handles.push(spawn_log_reader(stdout, log.clone()));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        handles.push(spawn_log_reader(stderr, log.clone()));
+    }
+    {
+        let mut lock = state.child.lock().await;
+        *lock = Some(child);
+    }
+    let exit_code;
+    loop {
+        {
+            let mut lock = state.child.lock().await;
+            if let Some(ref mut c) = *lock {
+                if let Some(status) = c.try_wait().map_err(|e| e.to_string())? {
+                    exit_code = status.code().unwrap_or(1);
+                    break;
+                }
+            } else {
+                return Ok(None);
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    {
+        let mut lock = state.child.lock().await;
+        *lock = None;
+    }
+    for handle in handles {
+        let _ = handle.await;
+    }
+    let bytes = log.lock().await.clone();
+    let log_str = String::from_utf8_lossy(&bytes).to_string();
+    Ok(Some(GameRunResult { log: log_str, exit_code }))
+}
+
+fn game_exited_ok(result: &GameRunResult) -> bool {
+    #[cfg(not(target_os = "windows"))]
+    {
+        result.log.lines()
+            .rev()
+            .take(3)
+            .any(|line| line.contains("AppPolicyGetProcessTerminationMethod"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        result.exit_code == 0
+    }
+}
+
+fn handle_game_exit(
+    app: &AppHandle,
+    state: &State<'_, GameState>,
+    result: GameRunResult,
+) -> Result<(), String> {
+    if state.manual_stop.swap(false, Ordering::SeqCst) || game_exited_ok(&result) {
+        return Ok(());
+    }
+    let _ = app.emit("game-log", result.log);
+    Err("The game exited unexpectedly. Check the crash log for details.".into())
+}
+
 async fn perform_instance_sync(app: &AppHandle, instance_id: &str) -> Result<(), String> {
     let target_dir = util::get_instance_working_dir(app, instance_id);
     if !target_dir.exists() {
@@ -643,4 +782,64 @@ async fn perform_instance_sync(app: &AppHandle, instance_id: &str) -> Result<(),
 
     perform_dlc_sync(app, &target_dir)?;
     Ok(())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+pub fn switch_proton(app: AppHandle, version: String) -> Result<(), String> {
+    let instance_id = {
+        let config_val = config::load_config_raw(app.clone());
+        config_val.profile.unwrap_or_else(|| "legacy_evolved".into())
+    };
+    crate::android_runtime::launch_bridge(
+        instance_id,
+        crate::android_runtime::BridgeAction::SwitchProton,
+        vec![version],
+    )
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub fn switch_proton(_app: AppHandle, _version: String) -> Result<(), String> {
+    Err("Only supported on Android".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+pub fn install_latest_driver(app: AppHandle) -> Result<(), String> {
+    let instance_id = {
+        let config_val = config::load_config_raw(app.clone());
+        config_val.profile.unwrap_or_else(|| "legacy_evolved".into())
+    };
+    crate::android_runtime::launch_bridge(
+        instance_id,
+        crate::android_runtime::BridgeAction::InstallDriver,
+        Vec::new(),
+    )
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub fn install_latest_driver(_app: AppHandle) -> Result<(), String> {
+    Err("Only supported on Android".into())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+pub fn set_audio_backend(app: AppHandle, backend: String) -> Result<(), String> {
+    let instance_id = {
+        let config_val = config::load_config_raw(app.clone());
+        config_val.profile.unwrap_or_else(|| "legacy_evolved".into())
+    };
+    crate::android_runtime::launch_bridge(
+        instance_id,
+        crate::android_runtime::BridgeAction::SetAudioBackend,
+        vec![backend],
+    )
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+pub fn set_audio_backend(_app: AppHandle, _backend: String) -> Result<(), String> {
+    Err("Only supported on Android".into())
 }

@@ -1,8 +1,17 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { TauriService, type CustomEdition } from "../services/TauriService";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { usePlatform } from "./usePlatform";
+import { HIDDEN_INSTANCE_URL } from "../types/edition";
 import type { Edition } from "../types/edition";
-
 async function imageUrlToBase64(url: string): Promise<string> {
   const response = await fetch(url);
   const blob = await response.blob();
@@ -17,16 +26,17 @@ async function imageUrlToBase64(url: string): Promise<string> {
     reader.readAsDataURL(blob);
   });
 }
-const BASE_EDITIONS = [
+export const BASE_EDITIONS = [
   {
     id: "legacy_evolved",
     name: "neoLegacy",
     desc: "Backporting newer title updates and Minigames back to LCE",
-    url: "https://github.com/pieeebot/neoLegacy/releases/download/latest/neoLegacyWindows64.zip",
+    url: "https://git.neolegacy.dev/neoStudiosLCE/neoLegacy/releases/download/latest/neoLegacyWindows64.zip", //neo: fuck IBA (Julia)
     titleImage: "/images/minecraft_title_neoLegacy.png",
     supportsSlimSkins: true,
     logo: "/images/neoLegacy.png",
     panorama: "legacy_evolved",
+    officialDLC: "main:https://git.neolegacy.dev/neoStudiosLCE/DLCs", //neo: format is {branch}:{git_url}
   },
   {
     id: "revelations",
@@ -35,27 +45,83 @@ const BASE_EDITIONS = [
     url: "https://git.revela.dev/itsRevela/LCE-Revelations/releases/download/Nightly/LCE-Revelations-Client-Win64.zip",
     titleImage: "/images/minecraft_title_revelations.png",
     supportsSlimSkins: false,
+    panorama: "vanilla_tu19",
+    logo: "/images/revelations.png",
+  },
+  /*{
+    id: "cafeberry",
+    name: "Cafeberry",
+    desc: "Project aiming to faithfully backport TUs, add cross-play and more!",
+    url: "https://gitea.str1k3r.xyz/cafeberry/cafeberry/releases/download/latest/LCEWindows64.zip",
+    titleImage: "/images/cafeberry_title.png",
+    supportsSlimSkins: false,
+    logo: "", //neo: TODO: add Cafeberry logo
     panorama: "vanilla_tu24",
+    lceOnline: false, //neo: for now.
+  },*/
+  {
+    id: "lostlegacy",
+    name: "Project Lost Legacy",
+    desc: "Downporting project aiming at bringing back the feel of Title Update 1 with extra QoL features.",
+    url: "no", //neo: TODO: update url when sails makes it public
+    titleImage: "/images/lostlegacy_title.png",
+    logo: "/images/lostlegacy.png",
+    supportsSlimSkins: false,
+    panorama: "vanilla_tu1",
+    comingSoon: true,
   },
   {
     id: "360revived",
     name: "360 Revived",
     desc: "PC port of Xbox 360 Edition TU19",
-    url: "https://github.com/BluTac10/360Revived/releases/download/nightly/LCEWindows64.zip",
+    url: "https://github.com/BlackHoleSpirit/360-Revived/releases/download/nightly/360-Revived.zip",
     titleImage: "/images/minecraft_title_360revived.png",
     supportsSlimSkins: false,
     logo: "/images/360_revived.png",
     panorama: "360revived",
+    hideOnAndroid: true, //neo: 360revived shows a black screen on Android
   },
   {
     id: "legacy_nether_fork",
     name: "Hellish Ends",
-    desc: "QoL, Random additions, and Nether/End dimensions overhaul (Modded build !)",
-    url: "https://github.com/deadvoxelx/HellishEnds/releases/download/nightly/LCEWindows64.zip",
+    desc: "QoL, Random additions, and Nether/End/Aether dimensions overhaul (Modded build!)",
+    url: "https://github.com/deadvoxelx/ThatModdedRepo/releases/download/nightly/LCEWindows64.zip",
     titleImage: "/images/minecraft_title_hellishends.png",
     supportsSlimSkins: false,
-    logo: "/images/netherrack_0.png",
+    logo: "/images/hellishEndsIcon.png",
+    panorama: "hellishends",
+  },
+  {
+    id: "moon_edition",
+    name: "Minecraft: Moon Edition",
+    desc: "Galacticraft LCE port (Modded build!)",
+    url: "https://github.com/blazin-blaze/moon-edition/releases/latest/download/moonEditionWindows64.zip",
+    titleImage: "/images/minecraft_title_moon.png",
+    supportsSlimSkins: false,
+    logo: "/images/moonEdition.png",
+    panorama: "moonedition",
+  },
+  {
+    //neo: disabled.
+    id: "lceonline",
+    name: "LCE Online Client",
+    desc: "[DISCONTINUED!] Restoring the classic LCE online experience with friends, world hosting, leaderboards & more.",
+    url: HIDDEN_INSTANCE_URL, //neo: was "https://github.com/lceonline/MCLEClient/releases/latest/download/LCENWindows64.zip"
+    titleImage: "/images/lceonline.png",
+    supportsSlimSkins: false,
+    logo: "/images/lce_online.png",
     panorama: "vanilla_tu19",
+    lceOnline: true,
+  },
+  {
+    id: "amythest",
+    name: "Amethyst LCE",
+    desc: "A project aimed towards backporting modern Java edition features and their feel into LCE! ",
+    logo: "/images/amythest.png",
+    panorama: "vanilla_tu24", //neo: TODO: use the Amythest's panorama
+    supportsSlimSkins: false, //neo: TODO: check properly lol
+    titleImage: "/images/amythest_title.png",
+    url: "https://github.com/ducttapesucker9000-svg/Amethyst_Source/releases/download/latest/Amethyst-Windows-Release.zip",
   },
 ];
 
@@ -66,9 +132,14 @@ const PARTNERSHIP_SERVERS = [
     port: 25565,
   },
   {
-    name: "Relic Network",
-    ip: "lce.relicnetwork.xyz",
+    name: "BluerNetwork",
+    ip: "bluer-network.ddns.net",
     port: 25565,
+  },
+  {
+    name: "LapboardMC",
+    ip: "104.168.125.227",
+    port: 4444,
   },
 ];
 
@@ -77,6 +148,12 @@ interface GameManagerProps {
   setProfile: (id: string) => void;
   customEditions: CustomEdition[];
   setCustomEditions: (editions: CustomEdition[]) => void;
+  customPaths: Record<string, string>;
+  setCustomPaths: Dispatch<SetStateAction<Record<string, string>>>;
+  customizations: Record<string, { titleImage?: string; panorama?: string }>;
+  setCustomizations: Dispatch<
+    SetStateAction<Record<string, { titleImage?: string; panorama?: string }>>
+  >;
   extraLaunchArgs?: string[];
 }
 
@@ -102,17 +179,25 @@ export function useGameManager({
   setProfile,
   customEditions,
   setCustomEditions,
+  setCustomPaths,
+  customizations,
+  setCustomizations,
   extraLaunchArgs,
 }: GameManagerProps) {
+  const { isAndroid } = usePlatform();
   const [installs, setInstalls] = useState<string[]>([]);
   const [isGameRunning, setIsGameRunning] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<
+    Record<string, number>
+  >({});
+  const [downloadingIds, setDownloadingIds] = useState<string[]>([]);
   const [isRunnerDownloading, setIsRunnerDownloading] = useState(false);
   const [runnerDownloadProgress, setRunnerDownloadProgress] = useState<
     number | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  const [gameLog, setGameLog] = useState<string | null>(null);
+  const gameLogRef = useRef(false);
   const [gameUpdateMessage, setGameUpdateMessage] = useState<string | null>(
     null,
   );
@@ -126,7 +211,6 @@ export function useGameManager({
   >({});
   const branchesFetched = useRef<Set<string>>(new Set());
   const initialBranchesSet = useRef(false);
-
   useEffect(() => {
     if (initialBranchesSet.current || !profile) return;
     BASE_EDITIONS.forEach((e) => {
@@ -140,44 +224,31 @@ export function useGameManager({
     initialBranchesSet.current = true;
   }, [profile]);
 
-  useEffect(() => {
-    async function fetchLatestReleases() {
-      try {
-        const response = await fetch(
-          "https://api.github.com/repos/pieeebot/neoLegacy/releases/latest",
-        );
-        if (response.ok) {
-          const data = await response.json();
-          const asset = data.assets.find(
-            (a: { name: string }) => a.name === "neoLegacyWindows64.zip",
-          );
-          if (asset) {
-            setDynamicUrls((prev) => ({
-              ...prev,
-              legacy_evolved: asset.browser_download_url,
-            }));
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch latest releases:", e);
-      }
-    }
-    fetchLatestReleases();
-  }, []);
-
   const fetchBranchesForEdition = useCallback(
     async (editionId: string, url: string) => {
       if (branchesFetched.current.has(editionId)) return;
-      if (!url.includes("github.com")) return;
-      const parts = url.split("github.com/")[1].split("/");
-      const owner = parts[0];
-      const repo = parts[1];
+      if (!url.includes("/releases/download/")) return;
       try {
-        const response = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/releases`,
+        const urlObj = new URL(url);
+        const pathParts = urlObj.pathname
+          .split("/releases/download/")[0]
+          .split("/")
+          .filter(Boolean);
+        const owner = pathParts[0];
+        const repo = pathParts[1];
+        const isGitHub = urlObj.host === "github.com";
+        const apiBase = isGitHub
+          ? `https://api.github.com/repos/${owner}/${repo}`
+          : `${urlObj.origin}/api/v1/repos/${owner}/${repo}`;
+
+        const res = await TauriService.httpProxyRequest(
+          "GET",
+          `${apiBase}/releases`,
+          null,
+          {},
         );
-        if (response.ok) {
-          const data = await response.json();
+        if (res.status >= 200 && res.status < 300) {
+          const data = JSON.parse(res.body);
           let tags: string[] = data
             .map((r: { tag_name: string }) => r.tag_name)
             .filter((t: string) => !t.toLowerCase().includes("server"));
@@ -196,6 +267,18 @@ export function useGameManager({
 
           setBranches((prev) => ({ ...prev, [editionId]: tags }));
           branchesFetched.current.add(editionId);
+          if (data.length > 0) {
+            const filename = url.split("/").pop();
+            const asset = data[0].assets?.find(
+              (a: { name: string }) => a.name === filename,
+            );
+            if (asset) {
+              setDynamicUrls((prev) => ({
+                ...prev,
+                [editionId]: asset.browser_download_url,
+              }));
+            }
+          }
         }
       } catch (e) {
         console.error(`Failed to fetch branches for ${editionId}:`, e);
@@ -236,35 +319,54 @@ export function useGameManager({
 
   const editions = useMemo((): Edition[] => {
     return [
-      ...BASE_EDITIONS.map((e) => {
-        const availableBranches = branches[e.id] || ["Stable"];
-        const selectedBranch = selectedBranches[e.id] || availableBranches[0];
-        let url = dynamicUrls[e.id] || e.url;
-        const defaultBranchFromUrl = e.url.includes("/releases/download/")
-          ? e.url.split("/releases/download/")[1].split("/")[0]
-          : "nightly";
-        const branchToUse =
-          selectedBranch === "Stable"
-            ? dynamicUrls[`${e.id}_Stable`] || defaultBranchFromUrl
-            : selectedBranch;
-        if (e.url.includes("github.com")) {
-          const baseUrl = e.url.split("/releases/download/")[0];
-          const filename = e.url.split("/").pop();
-          url = `${baseUrl}/releases/download/${branchToUse}/${filename}`;
-        }
+      ...BASE_EDITIONS.filter((e) => !(isAndroid && e.hideOnAndroid)).map(
+        (e) => {
+          const availableBranches = branches[e.id] || ["Stable"];
+          const selectedBranch = selectedBranches[e.id] || availableBranches[0];
+          let url = dynamicUrls[e.id] || e.url;
+          const defaultBranchFromUrl = e.url.includes("/releases/download/")
+            ? e.url.split("/releases/download/")[1].split("/")[0]
+            : "nightly";
+          const branchToUse =
+            selectedBranch === "Stable"
+              ? dynamicUrls[`${e.id}_Stable`] || defaultBranchFromUrl
+              : selectedBranch;
+          if (e.url.includes("/releases/download/")) {
+            const baseUrl = e.url.split("/releases/download/")[0];
+            const filename = e.url.split("/").pop();
+            url = `${baseUrl}/releases/download/${branchToUse}/${filename}`;
+          }
 
-        return {
-          ...e,
-          url,
-          branches: availableBranches,
-          selectedBranch,
-          instanceId:
-            selectedBranch === "Stable" ? e.id : `${e.id}_${selectedBranch}`,
-        };
+          const edition = {
+            ...e,
+            url,
+            branches: availableBranches,
+            selectedBranch,
+            instanceId:
+              selectedBranch === "Stable" ? e.id : `${e.id}_${selectedBranch}`,
+          };
+          const custom = customizations[e.id];
+          if (custom?.titleImage) edition.titleImage = custom.titleImage;
+          if (custom?.panorama) edition.panorama = custom.panorama;
+          return edition;
+        },
+      ),
+      ...customEditions.map((e) => {
+        const edition: Edition = { ...e, instanceId: e.id };
+        const custom = customizations[e.id];
+        if (custom?.titleImage) edition.titleImage = custom.titleImage;
+        if (custom?.panorama) edition.panorama = custom.panorama;
+        return edition;
       }),
-      ...customEditions.map((e) => ({ ...e, instanceId: e.id })),
     ];
-  }, [customEditions, dynamicUrls, branches, selectedBranches]);
+  }, [
+    customEditions,
+    dynamicUrls,
+    branches,
+    selectedBranches,
+    customizations,
+    isAndroid,
+  ]);
 
   const checkInstalls = useCallback(async () => {
     const results = await Promise.all(
@@ -283,6 +385,8 @@ export function useGameManager({
     const checks = await Promise.all(
       editions.map(async (edition) => {
         if (!installs.includes(edition.instanceId))
+          return [edition.instanceId, false] as const;
+        if (edition.url === HIDDEN_INSTANCE_URL)
           return [edition.instanceId, false] as const;
         try {
           const isUpdate = await TauriService.checkGameUpdate(
@@ -325,17 +429,35 @@ export function useGameManager({
 
   useEffect(() => {
     checkInstalls();
-    const unlistenDownload = TauriService.onDownloadProgress((p) =>
-      setDownloadProgress(p),
+    const unlistenDownload = TauriService.onDownloadProgress((data) =>
+      setDownloadProgress((prev) => ({
+        ...prev,
+        [data.instanceId]: data.percent,
+      })),
     );
     const unlistenRunner = TauriService.onRunnerDownloadProgress((p) =>
       setRunnerDownloadProgress(p),
     );
+    const unlistenError = TauriService.onBackendError((msg) => {
+      setError(msg);
+    });
+    const unlistenRetry = TauriService.onDownloadRetry((attempt) => {
+      setError(`Download failed, retrying (${attempt}/3)...`);
+    });
+    const unlistenGameLog = TauriService.onGameLog((log) => {
+      gameLogRef.current = true;
+      setError(null);
+      setGameLog(log);
+      if (!isAndroid) getCurrentWindow().unminimize();
+    });
     return () => {
       unlistenDownload.then((u) => u());
       unlistenRunner.then((u) => u());
+      unlistenError.then((u) => u());
+      unlistenRetry.then((u) => u());
+      unlistenGameLog.then((u) => u());
     };
-  }, [customEditions, checkInstalls]);
+  }, [customEditions, checkInstalls, isAndroid]);
 
   const downloadRunner = useCallback(
     async (name: string, url: string) => {
@@ -349,7 +471,11 @@ export function useGameManager({
       } catch (e: unknown) {
         console.error(e);
         setError(
-          e instanceof Error ? e.message : typeof e === "string" ? e : "Failed to download runner",
+          e instanceof Error
+            ? e.message
+            : typeof e === "string"
+              ? e
+              : "Failed to download runner",
         );
       } finally {
         setIsRunnerDownloading(false);
@@ -360,29 +486,41 @@ export function useGameManager({
 
   const toggleInstall = useCallback(
     async (id: string) => {
-      if (downloadingId) return;
+      if (downloadingIds.includes(id)) return;
       const edition = editions.find((e) => e.instanceId === id);
       if (!edition) return;
       setError(null);
       try {
-        setDownloadingId(id);
-        setDownloadProgress(0);
+        setDownloadingIds((prev) => [...prev, id]);
+        setDownloadProgress((prev) => ({ ...prev, [id]: 0 }));
         await TauriService.downloadAndInstall(edition.url, id);
         await TauriService.syncDlc(id);
         await checkInstalls();
         setProfile(id);
-        setDownloadProgress(null);
-        setDownloadingId(null);
+        setDownloadProgress((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setDownloadingIds((prev) => prev.filter((did) => did !== id));
       } catch (e: unknown) {
         console.error(e);
         setError(
-          e instanceof Error ? e.message : typeof e === "string" ? e : "Failed to install version",
+          e instanceof Error
+            ? e.message
+            : typeof e === "string"
+              ? e
+              : "Failed to install version",
         );
-        setDownloadProgress(null);
-        setDownloadingId(null);
+        setDownloadProgress((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setDownloadingIds((prev) => prev.filter((did) => did !== id));
       }
     },
-    [downloadingId, editions, checkInstalls, setProfile],
+    [downloadingIds, editions, checkInstalls, setProfile],
   );
 
   const handleUninstall = useCallback(
@@ -393,35 +531,60 @@ export function useGameManager({
     [checkInstalls],
   );
 
-  const handleCancelDownload = useCallback(async () => {
-    if (!downloadingId) return;
-    try {
-      await TauriService.cancelDownload();
-      await TauriService.deleteInstance(downloadingId);
-      setDownloadingId(null);
-      setDownloadProgress(null);
-      await checkInstalls();
-    } catch (e) {
-      console.error(e);
-    }
-  }, [downloadingId, checkInstalls]);
+  const handleCancelDownload = useCallback(
+    async (id: string) => {
+      try {
+        await TauriService.cancelDownload(id);
+        await TauriService.deleteInstance(id);
+        setDownloadProgress((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setDownloadingIds((prev) => prev.filter((did) => did !== id));
+        await checkInstalls();
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    [checkInstalls],
+  );
 
   const handleLaunch = useCallback(async () => {
     if (isGameRunning) return;
     setError(null);
     setIsGameRunning(true);
     try {
-      getCurrentWindow().minimize();
-      await TauriService.launchGame(profile, PARTNERSHIP_SERVERS, extraLaunchArgs);
+      if (!isAndroid) getCurrentWindow().minimize();
+      const currentEdition = editions.find((e) => e.instanceId === profile);
+      await TauriService.launchGame(
+        profile,
+        PARTNERSHIP_SERVERS,
+        currentEdition?.lceOnline
+          ? (extraLaunchArgs ?? []).concat([
+              "-token",
+              localStorage.getItem("lceonline_session")
+                ? JSON.parse(localStorage.getItem("lceonline_session")!)
+                    .accessToken
+                : "",
+            ])
+          : extraLaunchArgs,
+      );
     } catch (e: unknown) {
       console.error(e);
-      setError(
-        e instanceof Error ? e.message : typeof e === "string" ? e : "Failed to launch game",
-      );
+      if (!gameLogRef.current) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : typeof e === "string"
+              ? e
+              : "Failed to launch game",
+        );
+      }
     } finally {
       setIsGameRunning(false);
     }
-  }, [isGameRunning, profile, extraLaunchArgs]);
+  }, [isGameRunning, profile, extraLaunchArgs, isAndroid]);
 
   const stopGame = useCallback(async () => {
     try {
@@ -474,6 +637,37 @@ export function useGameManager({
     [customEditions, setCustomEditions],
   );
 
+  const updateCustomization = useCallback(
+    (
+      instanceId: string,
+      updates: { titleImage?: string; panorama?: string },
+    ) => {
+      setCustomizations((prev) => ({
+        ...prev,
+        [instanceId]: { ...prev[instanceId], ...updates },
+      }));
+    },
+    [],
+  );
+
+  const saveCustomPath = useCallback(
+    async (instanceId: string, path: string) => {
+      const config = await TauriService.loadConfig();
+      config.customPaths = {
+        ...config.customPaths,
+        [instanceId]: path,
+      };
+      await TauriService.saveConfig(config);
+      setCustomPaths((prev) => ({ ...prev, [instanceId]: path }));
+    },
+    [setCustomPaths],
+  );
+
+  const clearGameLog = useCallback(() => {
+    gameLogRef.current = false;
+    setGameLog(null);
+  }, []);
+
   const addToSteam = useCallback(
     async (
       id: string,
@@ -491,7 +685,11 @@ export function useGameManager({
       } catch (e: unknown) {
         console.error(e);
         setError(
-          e instanceof Error ? e.message : typeof e === "string" ? e : "Failed to add to Steam",
+          e instanceof Error
+            ? e.message
+            : typeof e === "string"
+              ? e
+              : "Failed to add to Steam",
         );
       }
     },
@@ -502,11 +700,13 @@ export function useGameManager({
     installs,
     isGameRunning,
     downloadProgress,
-    downloadingId,
+    downloadingIds,
     isRunnerDownloading,
     runnerDownloadProgress,
     error,
     setError,
+    gameLog,
+    clearGameLog,
     editions,
     toggleInstall,
     handleUninstall,
@@ -525,5 +725,8 @@ export function useGameManager({
     updatesAvailable,
     addToSteam,
     cycleBranch,
+    customizations,
+    updateCustomization,
+    saveCustomPath,
   };
 }

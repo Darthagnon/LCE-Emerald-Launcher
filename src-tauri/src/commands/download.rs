@@ -1,10 +1,109 @@
 use std::fs;
 use std::io::Write;
+use std::time::Duration;
 use futures_util::StreamExt;
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 use crate::state::DownloadState;
 use crate::util;
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadProgress {
+    pub instance_id: String,
+    pub percent: f64,
+}
+
+async fn stream_download(
+    app: &AppHandle,
+    state: &DownloadState,
+    url: &str,
+    dest: &std::path::PathBuf,
+    instance_id: &str,
+) -> Result<String, String> {
+    let token = CancellationToken::new();
+    let child_token = token.clone();
+    {
+        let mut lock = state.tokens.lock().await;
+        lock.insert(instance_id.to_string(), token);
+    }
+
+    let response = reqwest::Client::new().get(url).header(reqwest::header::USER_AGENT, "Emerald-Launcher").send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        { state.tokens.lock().await.remove(instance_id); }
+        return Err(format!("Download failed: {}", response.status()));
+    }
+
+    let total_size = response.content_length().unwrap_or(0) as f64;
+    let last_modified = response.headers().get(reqwest::header::LAST_MODIFIED)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let mut file = fs::File::create(dest).map_err(|e| e.to_string())?;
+    let mut downloaded = 0.0;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        if child_token.is_cancelled() {
+            drop(file);
+            let _ = fs::remove_file(dest);
+            { state.tokens.lock().await.remove(instance_id); }
+            return Err("CANCELLED".into());
+        }
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as f64;
+        if total_size > 0.0 {
+            let _ = app.emit("download-progress", DownloadProgress {
+                instance_id: instance_id.to_string(),
+                percent: downloaded / total_size * 100.0,
+            });
+        }
+    }
+
+    drop(file);
+    { state.tokens.lock().await.remove(instance_id); }
+    Ok(last_modified)
+}
+
+async fn download_with_retry(
+    app: &AppHandle,
+    state: &DownloadState,
+    url: &str,
+    dest: &std::path::PathBuf,
+    instance_id: &str,
+    max_retries: u32,
+) -> Result<String, String> {
+    let mut last_error = String::new();
+    for attempt in 1..=max_retries {
+        if attempt > 1 {
+            let backoff = Duration::from_secs(2u64.pow(attempt - 2));
+            let cancel = CancellationToken::new();
+            {
+                let mut lock = state.tokens.lock().await;
+                lock.insert(instance_id.to_string(), cancel.clone());
+            }
+            let _ = app.emit("download-retry", attempt);
+            tokio::select! {
+                _ = tokio::time::sleep(backoff) => {}
+                _ = cancel.cancelled() => {
+                    let _ = fs::remove_file(dest);
+                    return Err("CANCELLED".into());
+                }
+            }
+        }
+        match stream_download(app, state, url, dest, instance_id).await {
+            Ok(result) => return Ok(result),
+            Err(e) if e == "CANCELLED" => return Err(e),
+            Err(e) => {
+                last_error = e;
+                let _ = fs::remove_file(dest);
+            }
+        }
+    }
+    let _ = app.emit("backend-error", format!("Download failed after {max_retries} attempts: {last_error}"));
+    Err(last_error)
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn download_and_install(
@@ -13,26 +112,19 @@ pub async fn download_and_install(
     url: String,
     instance_id: String,
 ) -> Result<String, String> {
+    let instance_dir = util::get_instance_working_dir(&app, &instance_id);
     let root = util::get_app_dir(&app);
-    let instance_dir = root.join("instances").join(&instance_id);
-    let token = CancellationToken::new();
-    let child_token = token.clone();
-    {
-        let mut lock = state.token.lock().await;
-        if let Some(old_token) = lock.take() {
-            old_token.cancel();
-        }
-        *lock = Some(token);
-    }
-
+    let zip_path = root.join(format!("temp_{}.zip", instance_id));
+    let last_modified = download_with_retry(&app, &state, &url, &zip_path, &instance_id, 3).await?;
     let keep_list: std::collections::HashSet<&str> = [
         "Windows64", "Windows64Media", "uid.dat", "username.txt", "settings.dat",
         "servers.dat", "servers.txt", "server.properties", "options.txt", "servers.db",
         "workshop_files.json", "screenshots", "update_timestamp.txt",
         "profile0.dat", "profile1.dat", "profile2.dat", "profile3.dat",
         "profile4.dat", "profile5.dat", "profile6.dat", "profile7.dat",
-        "profile8.dat", "profile9.dat", "profile10.dat"
+        "profile8.dat", "profile9.dat", "profile10.dat", "proton_prefix"
     ].iter().copied().collect();
+
     if !instance_dir.exists() {
         fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
     } else {
@@ -64,53 +156,43 @@ pub async fn download_and_install(
         }
     }
 
-    let zip_path = root.join(format!("temp_{}.zip", instance_id));
-    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("Download failed: {}", response.status()));
-    }
-
-    let last_modified = response.headers().get(reqwest::header::LAST_MODIFIED)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("")
-        .to_string();
     if !last_modified.is_empty() {
-        let _ = fs::write(instance_dir.join("update_timestamp.txt"), last_modified);
+        let _ = fs::write(instance_dir.join("update_timestamp.txt"), &last_modified);
     }
 
-    let total_size = response.content_length().unwrap_or(0) as f64;
-    let mut file = fs::File::create(&zip_path).map_err(|e| e.to_string())?;
-    let mut downloaded = 0.0;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        if child_token.is_cancelled() {
-            drop(file);
-            let _ = fs::remove_file(&zip_path);
-            return Err("CANCELLED".into());
-        }
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as f64;
-        if total_size > 0.0 {
-            let _ = app.emit("download-progress", downloaded / total_size * 100.0);
-        }
-    }
-
-    drop(file);
-    { *state.token.lock().await = None; }
     #[cfg(target_os = "linux")]
     {
-        let status = std::process::Command::new("bsdtar")
+        let bsdtar_ok = std::process::Command::new("bsdtar")
             .args(["-xf", zip_path.to_str().unwrap(), "-C", instance_dir.to_str().unwrap()])
             .status()
-            .map_err(|e| e.to_string())?;
+            .map(|s| s.success())
+            .unwrap_or(false);
 
+        if !bsdtar_ok {
+            let unzip_ok = std::process::Command::new("unzip")
+                .args(["-o", zip_path.to_str().unwrap(), "-d", instance_dir.to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            if !unzip_ok {
+                return Err("Extraction failed".into());
+            }
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let status = std::process::Command::new("unzip")
+            .args(["-o", zip_path.to_str().unwrap(), "-d", instance_dir.to_str().unwrap()])
+            .status()
+            .map_err(|e| e.to_string())?;
         if !status.success() {
             return Err("Extraction failed".into());
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(not(target_os = "linux"), not(target_os = "android")))]
     {
         let mut cmd = std::process::Command::new("tar");
         cmd.args(["-xf", zip_path.to_str().unwrap(), "-C", instance_dir.to_str().unwrap()]);
@@ -163,8 +245,11 @@ pub async fn download_and_install(
 }
 
 #[tauri::command]
-pub async fn cancel_download(state: State<'_, DownloadState>) -> Result<(), String> {
-    if let Some(token) = state.token.lock().await.take() { token.cancel(); }
+pub async fn cancel_download(state: State<'_, DownloadState>, instance_id: String) -> Result<(), String> {
+    let token = state.tokens.lock().await.remove(&instance_id);
+    if let Some(t) = token {
+        t.cancel();
+    }
     Ok(())
 }
 
@@ -182,43 +267,9 @@ pub async fn download_runner(
         let _ = fs::remove_dir_all(&runner_dir);
     }
     fs::create_dir_all(&runner_dir).map_err(|e| e.to_string())?;
-    let token = CancellationToken::new();
-    let child_token = token.clone();
-    {
-        let mut lock = state.token.lock().await;
-        if let Some(old_token) = lock.take() {
-            old_token.cancel();
-        }
-        *lock = Some(token);
-    }
-
     let tarball_path = runners_dir.join(format!("{}.tar.gz", name));
-    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("Download failed: {}", response.status()));
-    }
-
-    let total_size = response.content_length().unwrap_or(0) as f64;
-    let mut file = fs::File::create(&tarball_path).map_err(|e| e.to_string())?;
-    let mut downloaded = 0.0;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        if child_token.is_cancelled() {
-            drop(file);
-            let _ = fs::remove_file(&tarball_path);
-            let _ = fs::remove_dir_all(&runner_dir);
-            return Err("CANCELLED".into());
-        }
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as f64;
-        if total_size > 0.0 {
-            let _ = app.emit("runner-download-progress", downloaded / total_size * 100.0);
-        }
-    }
-
-    drop(file);
-    { *state.token.lock().await = None; }
+    let runner_id = format!("runner_{}", name);
+    download_with_retry(&app, &state, &url, &tarball_path, &runner_id, 3).await?;
     let status = std::process::Command::new("tar")
         .args(["-zxf", tarball_path.to_str().unwrap(), "-C", runner_dir.to_str().unwrap(), "--strip-components=1"])
         .status()
@@ -242,12 +293,16 @@ pub async fn check_game_update(
     let instance_dir = util::get_instance_working_dir(&app, &instance_id);
     let timestamp_file = instance_dir.join("update_timestamp.txt");
     let local_timestamp = fs::read_to_string(&timestamp_file).unwrap_or_default();
+    if url.is_empty() {
+        return Ok(false);
+    }
     if local_timestamp.is_empty() {
         return Ok(true);
     }
 
     let response = reqwest::Client::new()
         .head(&url)
+        .header(reqwest::header::USER_AGENT, "Emerald-Launcher")
         .send()
         .await
         .map_err(|e| e.to_string())?;

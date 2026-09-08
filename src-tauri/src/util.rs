@@ -22,6 +22,11 @@ pub fn get_instance_working_dir(app: &AppHandle, instance_id: &str) -> PathBuf {
             }
         }
     }
+    if let Some(ref custom_paths) = config.custom_paths {
+        if let Some(path) = custom_paths.get(instance_id) {
+            return PathBuf::from(path);
+        }
+    }
     root.join("instances").join(instance_id)
 }
 
@@ -37,14 +42,6 @@ pub fn copy_dir_all(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path:
         }
     }
     Ok(())
-}
-
-pub fn ws_base_url(api_base_url: &str) -> String {
-    if api_base_url.starts_with("https") {
-        api_base_url.replace("https", "wss")
-    } else {
-        api_base_url.replace("http", "ws")
-    }
 }
 
 #[cfg(unix)]

@@ -1,9 +1,13 @@
 pub mod config;
 pub mod console2lce;
+pub mod dlc;
 pub mod download;
 pub mod file_dialogs;
 pub mod game;
+pub mod java2lce;
 pub mod macos_setup;
+pub mod platform;
+pub mod plugins;
 pub mod proxy_cmd;
 pub mod runners;
 pub mod skin;

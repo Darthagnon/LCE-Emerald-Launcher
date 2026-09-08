@@ -2,7 +2,8 @@ use once_cell::sync::Lazy;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-const REGISTRY_URL: &str = "https://raw.githubusercontent.com/LCE-Hub/LCE-Workshop/refs/heads/main";
+use tauri::{AppHandle, Emitter};
+const REGISTRY_URL: &str = "https://raw.githubusercontent.com/LCE-Hub/LCE-Workshop/refs/heads/main"; //neo: more hardcoding!
 static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
 pub struct Guard {
     cancel: Option<CancellationToken>,
@@ -22,20 +23,21 @@ impl Drop for Guard {
     }
 }
 
-pub async fn start() -> CancellationToken {
+pub async fn start(app: AppHandle) -> CancellationToken {
     let cancel = CancellationToken::new();
     let server_cancel = cancel.clone();
     tokio::spawn(async move {
-        serve(server_cancel).await;
+        serve(app, server_cancel).await;
     });
 
     cancel
 }
 
-async fn serve(cancel: CancellationToken) {
-    let listener = match TcpListener::bind("127.0.0.1:5582").await {
+async fn serve(app: AppHandle, cancel: CancellationToken) {
+    let listener = match TcpListener::bind("127.0.0.1:5582").await { //neo: dont say a word about this weird port.
         Ok(l) => l,
         Err(e) => {
+            let _ = app.emit("backend-error", format!("Workshop server failed to bind: {e}"));
             eprintln!("[WorkshopServer] Failed to bind: {e}");
             return;
         }
@@ -49,6 +51,7 @@ async fn serve(cancel: CancellationToken) {
                         tokio::spawn(handle(stream));
                     }
                     Err(e) => {
+                        let _ = app.emit("backend-error", format!("Workshop server accept error: {e}"));
                         eprintln!("[WorkshopServer] Accept error: {e}");
                     }
                 }

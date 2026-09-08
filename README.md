@@ -3,7 +3,7 @@
   <h1>LCE Emerald Launcher</h1>
   <p><strong>FOSS cross-platform launcher for Minecraft Legacy Console Edition</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-1.0.0-blue?style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.6.1-blue?style=flat-square" alt="Version">
     <img src="https://img.shields.io/badge/license-GPL--3.0-green?style=flat-square" alt="License">
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20GNU/Linux-lightgrey?style=flat-square" alt="Platforms">
   </p>
@@ -24,6 +24,9 @@
 |-------------|---------------|----------|
 | <img width="1388" height="918" alt="image" src="https://github.com/user-attachments/assets/28269ade-db3b-4bff-ac15-e8a6eb53a69e" /> | <img width="1551" height="997" alt="image" src="https://github.com/user-attachments/assets/dca543ab-94cf-48ce-8e61-dfe92fe278a7" /> | <img width="1551" height="997" alt="image" src="https://github.com/user-attachments/assets/d7bc0ed2-3bf4-4704-83c3-75c716d13a65" /> |
 
+<a href="https://github.com/LCE-Hub/LCE-Emerald-Launcher/releases/latest">
+  <img src="https://raw.githubusercontent.com/rubenpgrady/get-it-on-github/refs/heads/main/get-it-on-github.png" style="width: 160px">
+</a>
 
 ---
 
@@ -35,7 +38,6 @@
   - [Windows](#windows)
   - [macOS](#macos)
   - [GNU/Linux](#gnulinux)
-- [Game Versions & Partnerships](#game-versions--partnerships)
 - [Building from Source](#building-from-source)
 - [Troubleshooting](#troubleshooting)
 - [Acknowledgments](#acknowledgments)
@@ -55,39 +57,24 @@ LCE Emerald Launcher is the easiest way to play Minecraft Legacy Console Edition
 
 | Feature | Description |
 |---------|-------------|
-| **Automated Setup** | One-click installation for neoLegacy, Revelations, 360 Revived, and Hellish Ends |
-| **Cross-Platform** | Native support for Windows, macOS (Intel & Apple Silicon), and Linux (Steam Deck is supported !) |
+| **Automated Setup** | One-click installation for neoLegacy, Revelations, 360 Revived, Hellish Ends and others |
+| **Cross-Platform** | Native support for Windows, macOS (Intel & Apple Silicon), and Linux (Steam Deck is also supported!) |
 | **Lightweight** | Very light RAM usage thanks to Rust backend and Tauri framework |
 | **Easy Configuration** | Built-in settings for username, game parameters, and profiles |
 | **Skin Viewer** | Interactive skin preview using Three.js with layer support |
-| **Custom Skins** | Import and manage your own skins with local storage |
+| **Custom Skins** | Import and manage your own skins and capes |
 | **Controller Support** | Full gamepad navigation support (keyboard support included) |
 | **Discord Rich Presence** | Show your current activity and game status on Discord |
-| **Workshop** | Community content |
-
----
-
-## Game Versions & Partnerships
-
-LCE Emerald Launcher integrates multiple community-driven builds of Minecraft Legacy Console Edition. Each build brings unique features and improvements to the classic LCE experience.
-
-### Available Builds
-
-| Build | Developer | Platform | Description |
-|-------|-----------|----------|-------------|
-| **[neoLegacy](https://github.com/pieeebot/neoLegacy)** | [@pieeebot](https://github.com/pieeebot) | GitHub | Backports newer title updates to LCE TU19 base. And Minigames |
-| **[Revelations](https://github.com/itsRevela/LCE-Revelations)** | [@itsRevela](https://github.com/itsRevela) | GitHub | Enhanced LCE with uncapped FPS, graphics fixes, hardcore hearts, and dedicated server security. Features LAN multiplayer, split-screen, and keyboard & mouse support |
-| **[360 Revived](https://github.com/BluTac10/360Revived)** | [@BluTac10](https://github.com/BluTac10) | GitHub | PC port of Xbox 360 Edition TU19 with desktop optimizations. Features keyboard & mouse, fullscreen, LAN multiplayer, dedicated server, and split-screen support |
-| **[Hellish Ends](https://github.com/deadvoxelx/HellishEnds)** | [DeadVoxelx](https://github.com/deadvoxelx) | GitHub | Modded build that overhauls Nether and End |
+| **Workshop** | Community content like DLCs, Textures, Skins and more |
+| **Free Multiplayer** | Powered by LCEOnline, Emerald provides a free multiplayer service so you can play with anyone without port forwarding! |
+| **Developer Tools** | Create and edit 4J's propriatery file formats with ease! |
+| **World conversion** | Import `.ms` files, Java worlds or even an Xbox 360/PS3 world! |
+| **Playtime counting** | Count your playtime and see your most active days! |
 
 ---
 
 ## Installation
 
-<a href="https://github.com/LCE-Hub/LCE-Emerald-Launcher/releases">
-  <img src="https://raw.githubusercontent.com/rubenpgrady/get-it-on-github/refs/heads/main/get-it-on-github.png" style="width: 160px">
-</a>
-  
 ### Windows
 
 | Format | Best For |
@@ -106,6 +93,7 @@ LCE Emerald Launcher integrates multiple community-driven builds of Minecraft Le
 |--------|-------------|
 | `.dmg` (x64) | Intel Macs |
 | `.dmg` (aarch64) | Apple Silicon (M-series and A-series) |
+| Homebrew Cask | Intel & Apple Silicon (via tap) |
 
 **Installation Steps:**
 1. Download the appropriate DMG for your Mac
@@ -113,6 +101,15 @@ LCE Emerald Launcher integrates multiple community-driven builds of Minecraft Le
 3. If you see "app is damaged" error:
    - Right-click the app → **Open** → confirm **Open**
    - Or run: `xattr -cr "/Applications/Emerald Legacy Launcher.app"`
+
+**Homebrew:**
+```bash
+# Tap the repository
+brew tap LCE-Hub/lce-emerald-launcher https://github.com/LCE-Hub/LCE-Emerald-Launcher
+
+# Install stable release
+brew install --cask lce-emerald-launcher
+```
 
 ### GNU/Linux
 
@@ -124,10 +121,64 @@ Multiple distribution formats available:
 | `.rpm` | RHEL, Fedora, openSUSE |
 | `.AppImage` | Universal (no installation required) |
 | `.flatpak` | Universal with sandboxing (recommended over AppImage) |
+| Nix flake | NixOS and any Linux with [Nix](https://nixos.org/download/) installed |
+| Homebrew | Any Linux with [Homebrew](https://brew.sh/) installed |
+
+**AUR:**
+Special thanks to [AntiApple4life](https://aur.archlinux.org/packages?O=0&SeB=m&K=AntiApple4life) for the AUR packages!
+```bash
+# git version
+paru -S emerald-legacy-launcher-git # or yay
+
+# stable version
+paru -S emerald-legacy-launcher # or yay
+
+# binary stable version
+paru -S emerald-legacy-launcher-bin # or yay
+```
+
+**Nix:**
+Requires [Nix](https://nixos.org/download/) with flakes enabled (`experimental-features = nix-command flakes` in `nix.conf`).
+```bash
+# stable release (default) — tracks https://github.com/LCE-Hub/LCE-Emerald-Launcher/releases
+nix run github:LCE-Hub/LCE-Emerald-Launcher
+# or explicitly:
+nix run github:LCE-Hub/LCE-Emerald-Launcher#emerald-legacy-launcher
+
+# git / latest main
+nix run github:LCE-Hub/LCE-Emerald-Launcher#emerald-legacy-launcher-git
+
+# Install to your user profile
+nix profile install github:LCE-Hub/LCE-Emerald-Launcher                  # stable
+nix profile install github:LCE-Hub/LCE-Emerald-Launcher#emerald-legacy-launcher-git  # git
+```
+
+On NixOS, add the flake as an input and install `packages.<system>.default` / `emerald-legacy-launcher` (stable) or `emerald-legacy-launcher-git` (main).
+
+**Gentoo:**
+This repository includes a local Portage overlay under [`gentoo/`](gentoo/). Point `repos.conf` at that directory, then emerge the package (build fetches Cargo/npm deps over the network; Wine/Proton is needed at runtime to launch games):
+```bash
+# /etc/portage/repos.conf/emerald-legacy-launcher.conf
+[emerald-legacy-launcher]
+location = /path/to/LCE-Emerald-Launcher/gentoo
+auto-sync = no
+
+sudo emerge games-util/emerald-legacy-launcher          # 1.6.1
+# sudo emerge =games-util/emerald-legacy-launcher-9999  # live git
+```
 
 **Flatpak Installation:**
 ```bash
 flatpak install emerald.flatpak
+```
+
+**Homebrew:**
+```bash
+# Tap the repository
+brew tap LCE-Hub/lce-emerald-launcher https://github.com/LCE-Hub/LCE-Emerald-Launcher
+
+# Install stable release
+brew install lce-emerald-launcher
 ```
 
 **Dependencies (if building from source):**
@@ -183,10 +234,12 @@ sudo apt install --reinstall libwebkit2gtk-4.1-0
 
 ## Acknowledgments
 
+- **neoapps** - Main and most active developer of the Emerald Launcher
 - **The Emerald Team** - Technical development and maintenance
 - **4J Studios & Mojang** - Original creators of Legacy Console Edition
 - **The LCE Community** - Research and foundations for LCE on PC
-- **Veroxsity (Racoon)** - Original creator of the C# version of [console2lce](https://github.com/veroxsity/console2lce)
+- **Str1k3r** - Original creator of LCEOnline
+- **DTention** - Original creator of [LCE-Save-Converter](https://github.com/dtentiion/LCE-Save-Converter)
 
 ---
 

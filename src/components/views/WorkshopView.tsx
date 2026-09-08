@@ -1,4 +1,4 @@
-import {
+import React, {
   useState,
   useEffect,
   memo,
@@ -10,6 +10,8 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import {
   useUI,
   useAudio,
@@ -22,28 +24,33 @@ import {
   InstalledWorkshopPackage,
   type CustomEdition,
 } from "../../services/TauriService";
+import { PluginManager } from "../../plugins/PluginManager";
+import { usePlatform } from "../../hooks/usePlatform";
+import { BASE_EDITIONS } from "../../hooks/useGameManager";
 const REGISTRY_URL =
   "https://raw.githubusercontent.com/LCE-Hub/LCE-Workshop/refs/heads/main/registry.json";
 const VERSIONS_URL =
   "https://raw.githubusercontent.com/LCE-Hub/LCE-Workshop/refs/heads/main/versions.json";
+const PLUGINS_URL =
+  "https://raw.githubusercontent.com/LCE-Hub/LCE-Workshop/refs/heads/main/plugins.json";
 const RAW_BASE =
   "https://raw.githubusercontent.com/LCE-Hub/LCE-Workshop/refs/heads/main";
 const VERSIONS_BASE =
   "https://raw.githubusercontent.com/LCE-Hub/LCE-Workshop/refs/heads/main/.00versions";
-const BYTEBUKKIT_BASE = "https://emerald-bytebukkit.onrender.com";
-const SERVERS_URL =
-  "https://raw.githubusercontent.com/bytebukkit/servers/refs/heads/main/servers.json";
-const SERVERS_BASE =
-  "https://raw.githubusercontent.com/bytebukkit/servers/refs/heads/main";
-const CATEGORY_TABS = ["Skin", "Texture", "World", "Mod", "DLC"] as const;
-const ALL_TABS = [
-  ...CATEGORY_TABS,
-  "Versions",
-  "Installed",
-  "Server",
+//const PLUGINS_BASE =
+//  "https://raw.githubusercontent.com/LCE-Hub/LCE-Workshop/refs/heads/main/.00plugins";
+const LCEONLINE_BASE = "https://api.mclegacyedition.xyz";
+const CATEGORY_TABS = [
+  "Skin",
+  "Texture",
+  "World",
+  "Mod",
+  "DLC",
   "Plugins",
-  "Search",
 ] as const;
+const UTILITY_TABS = ["Versions", "Installed", "Search"] as const;
+const SERVER_TABS = ["Server", "Server Plugins"] as const;
+const ALL_TABS = [...CATEGORY_TABS, ...UTILITY_TABS, ...SERVER_TABS] as const;
 type TabType = (typeof ALL_TABS)[number];
 interface RegistryPackage {
   id: string;
@@ -61,46 +68,123 @@ interface RegistryPackage {
   download_count?: number;
   game_version?: string;
   github_url?: string;
-  file_name?: string;
+  download_url?: string;
   file_size?: number;
   server_address?: string;
   server_discord?: string;
   server_type?: string;
+  main?: string;
+  permissions?: string[];
+  files?: string[];
+  dependencies?: string[];
+  required_versions?: string[];
 }
 
 interface ServerListing {
-  server_name: string;
-  server_type: string;
-  server_address: string;
-  server_owner: string;
-  server_discord?: string;
-  console_version: string;
-  server_icon: string;
+  id: string;
+  owner: string;
+  name: string;
+  short_descripton: string;
+  description: string;
+  discord?: string;
+  version: string;
+  type: string;
+  ip: string;
+  port: string;
+  icon: string;
 }
 
-interface ByteBukkitAddon {
+interface LCEOnlineAddon {
   id: string;
   name: string;
   short_description: string;
   description: string;
   category: string;
   game_version: string;
-  visibility: string;
   github_url?: string;
   created_at: string;
   likes: number;
   downloads: number;
-  file_name: string;
+  download_url: string;
   file_size: number;
-  has_image: boolean;
-  username: string;
-  displayName: string;
+  icon: string;
+  has_icon: boolean;
+  author: string;
+}
+
+interface PluginRegistryEntry {
+  id: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  extended_description?: string;
+  main: string;
+  permissions?: string[];
+  files?: string[];
 }
 
 const COLS = 4;
-const WorkshopView = memo(function WorkshopView() {
+interface ZipGroup {
+  main: string;
+  parts: string[];
+  dest: string;
+}
+function groupZips(zips: Record<string, string>): ZipGroup[] {
+  const entries = Object.entries(zips).sort(([a], [b]) => a.localeCompare(b));
+  const consumed = new Set<string>();
+  const groups: ZipGroup[] = [];
+  for (const [name, dest] of entries) {
+    if (consumed.has(name)) continue;
+    if (!name.toLowerCase().endsWith(".zip")) continue;
+    const base = name.slice(0, -4);
+    const parts = [name];
+    consumed.add(name);
+    let n = 1;
+    for (;;) {
+      const cand = `${base}.z${String(n).padStart(2, "0")}`;
+      if (zips[cand] !== undefined) {
+        parts.push(cand);
+        consumed.add(cand);
+        n++;
+      } else {
+        break;
+      }
+    }
+    if (parts.length === 1) {
+      n = 1;
+      for (;;) {
+        const cand = `${base}.zip.${String(n).padStart(3, "0")}`;
+        if (zips[cand] !== undefined) {
+          parts.push(cand);
+          consumed.add(cand);
+          n++;
+        } else {
+          break;
+        }
+      }
+    }
+    groups.push({ main: name, parts, dest });
+  }
+  for (const [name, dest] of entries) {
+    if (!consumed.has(name)) {
+      consumed.add(name);
+      groups.push({ main: name, parts: [name], dest });
+    }
+  }
+  return groups;
+}
+interface WorkshopViewProps {
+  workshopTarget?: { id: string; type?: string } | null;
+  onClearWorkshopTarget?: () => void;
+}
+const WorkshopView = memo(function WorkshopView({
+  workshopTarget,
+  onClearWorkshopTarget,
+}: WorkshopViewProps) {
   const { setActiveView } = useUI();
   const { playPressSound, playBackSound } = useAudio();
+  const { isAndroid } = usePlatform();
   const config = useConfig();
   const containerRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -122,6 +206,10 @@ const WorkshopView = memo(function WorkshopView() {
   const [serverListingCategory, setServerListingCategory] =
     useState<string>("all");
   const [savedServers, setSavedServers] = useState<Set<string>>(new Set());
+  const [pluginPackages, setPluginPackages] = useState<RegistryPackage[]>([]);
+  const [installedPluginIds, setInstalledPluginIds] = useState<Set<string>>(
+    new Set(),
+  );
   const refreshInstalled = useCallback(async () => {
     try {
       const data = await TauriService.workshopListInstalled();
@@ -129,6 +217,12 @@ const WorkshopView = memo(function WorkshopView() {
     } catch {
       setInstalledPkgs([]);
     }
+  }, []);
+
+  const refreshInstalledPlugins = useCallback(() => {
+    const ids = new Set<string>();
+    PluginManager.instance.plugins.forEach((_, id) => ids.add(id));
+    setInstalledPluginIds(ids);
   }, []);
 
   useEffect(() => {
@@ -150,37 +244,58 @@ const WorkshopView = memo(function WorkshopView() {
     Promise.all([
       fetch(REGISTRY_URL).then((r) => r.json()),
       fetch(VERSIONS_URL).then((r) => r.json()),
+      fetch(PLUGINS_URL)
+        .then((r) => r.json())
+        .catch(() => null),
     ])
-      .then(([registryData, versionsData]) => {
+      .then(([registryData, versionsData, pluginsData]) => {
         setAllPackages(registryData.packages ?? []);
         setVersionPackages(versionsData.versionlist ?? []);
+        if (pluginsData?.pluginlist) {
+          setPluginPackages(
+            pluginsData.pluginlist.map((entry: PluginRegistryEntry) => ({
+              id: entry.id,
+              name: entry.name,
+              version: entry.version,
+              author: entry.author,
+              description: entry.description,
+              extended_description: entry.extended_description || "",
+              category: ["Plugin"],
+              thumbnail: "",
+              main: entry.main,
+              permissions: entry.permissions,
+              files: entry.files,
+            })),
+          );
+        }
         setLoading(false);
       })
       .catch((e) => {
         setError(e.message ?? "Failed to load registry");
         setLoading(false);
       });
-  }, []);
+    refreshInstalledPlugins();
+  }, [refreshInstalledPlugins]);
 
   useEffect(() => {
-    fetch(`${BYTEBUKKIT_BASE}/api/addons?limit=500`)
+    fetch(`${LCEONLINE_BASE}/plugins`)
       .then((r) => r.json())
-      .then((data: ByteBukkitAddon[]) => {
+      .then((data: LCEOnlineAddon[]) => {
         setServerPlugins(
           data.map((a) => ({
             id: a.id,
             name: a.name,
-            author: a.displayName || a.username,
+            author: a.author,
             description: a.short_description,
             extended_description: a.description,
             category: [a.category],
-            thumbnail: `${BYTEBUKKIT_BASE}/api/addons/${a.id}/icon`,
+            thumbnail: a.icon,
             version: "1.0",
             likes: a.likes,
             download_count: a.downloads,
             game_version: a.game_version,
             github_url: a.github_url,
-            file_name: a.file_name,
+            download_url: a.download_url,
             file_size: a.file_size,
           })),
         );
@@ -189,22 +304,22 @@ const WorkshopView = memo(function WorkshopView() {
   }, []);
 
   useEffect(() => {
-    fetch(SERVERS_URL)
+    fetch(`${LCEONLINE_BASE}/servers`)
       .then((r) => r.json())
-      .then((data: { servers: ServerListing[] }) => {
+      .then((data: ServerListing[]) => {
         setServerListings(
-          data.servers.map((s) => ({
-            id: s.server_name.toLowerCase().replace(/\s+/g, "-"),
-            name: s.server_name,
-            author: s.server_owner,
-            description: s.server_address,
-            extended_description: `**Server:** ${s.server_type}\n**Version:** ${s.console_version}\n**Owner:** ${s.server_owner}`,
-            category: [s.server_type],
-            thumbnail: `${SERVERS_BASE}${s.server_icon}`,
-            version: s.console_version,
-            server_address: s.server_address,
-            server_discord: s.server_discord ?? "",
-            server_type: s.server_type,
+          data.map((s) => ({
+            id: s.id,
+            name: s.name,
+            author: s.owner,
+            description: s.ip,
+            extended_description: `**Server:** ${s.type}\n**Version:** ${s.version}\n**Owner:** ${s.owner}`,
+            category: [s.type],
+            thumbnail: s.icon,
+            version: s.version,
+            server_address: s.ip,
+            server_discord: s.discord ?? "",
+            server_type: s.type,
           })),
         );
       })
@@ -222,7 +337,7 @@ const WorkshopView = memo(function WorkshopView() {
   }, [serverListings]);
 
   const getInstalledEntries = useCallback(
-    (pkgId: string) => {
+    (pkgId: string, pkgVersion?: string) => {
       if (activeTab === "Versions") {
         const isAdded = config.customEditions?.some(
           (e: CustomEdition) =>
@@ -241,15 +356,34 @@ const WorkshopView = memo(function WorkshopView() {
         }
         return [];
       }
-      if (activeTab === "Plugins" || activeTab === "Server") return [];
+      if (activeTab === "Plugins") {
+        return installedPluginIds.has(pkgId)
+          ? ([
+              {
+                packageId: pkgId,
+                instanceId: pkgId,
+                version: pkgVersion || "0.0.0",
+              },
+            ] as InstalledWorkshopPackage[])
+          : [];
+      }
+      if (activeTab === "Server Plugins" || activeTab === "Server") return [];
       return installedPkgs.filter((p) => p.packageId === pkgId);
     },
-    [installedPkgs, activeTab, config.customEditions, versionPackages],
+    [
+      installedPkgs,
+      activeTab,
+      config.customEditions,
+      versionPackages,
+      installedPluginIds,
+    ],
   );
 
   const isInstalled = useCallback(
     (pkgId: string) => {
-      if (activeTab === "Plugins" || activeTab === "Server") return false;
+      if (activeTab === "Plugins") return installedPluginIds.has(pkgId);
+      if (activeTab === "Server Plugins" || activeTab === "Server")
+        return false;
       if (activeTab === "Versions") {
         return (
           config.customEditions?.some(
@@ -261,14 +395,23 @@ const WorkshopView = memo(function WorkshopView() {
       }
       return installedPkgs.some((p) => p.packageId === pkgId);
     },
-    [installedPkgs, activeTab, config.customEditions, versionPackages],
+    [
+      installedPkgs,
+      activeTab,
+      config.customEditions,
+      versionPackages,
+      installedPluginIds,
+    ],
   );
 
   const hasUpdate = useCallback(
     (pkg: RegistryPackage) => {
+      if (activeTab === "Plugins") {
+        return false;
+      }
       if (
         activeTab === "Versions" ||
-        activeTab === "Plugins" ||
+        activeTab === "Server Plugins" ||
         activeTab === "Server"
       )
         return false;
@@ -293,7 +436,7 @@ const WorkshopView = memo(function WorkshopView() {
             );
           })
         : installedPackageList
-      : activeTab === "Plugins"
+      : activeTab === "Server Plugins"
         ? search.trim()
           ? serverPlugins.filter((pkg) => {
               if (
@@ -333,23 +476,34 @@ const WorkshopView = memo(function WorkshopView() {
               : serverListings.filter((pkg) =>
                   pkg.category.includes(serverListingCategory),
                 )
-          : (activeTab === "Versions" ? versionPackages : allPackages).filter(
-              (pkg) => {
-                const matchesTab =
-                  activeTab === "Search" || activeTab === "Versions"
-                    ? true
-                    : pkg.category.includes(activeTab);
-                if (!matchesTab) return false;
-                if (!search.trim())
-                  return activeTab === "Search" ? false : true;
-                const q = search.toLowerCase();
-                return (
-                  pkg.name.toLowerCase().includes(q) ||
-                  pkg.author.toLowerCase().includes(q) ||
-                  pkg.description.toLowerCase().includes(q)
-                );
-              },
-            );
+          : activeTab === "Plugins"
+            ? search.trim()
+              ? pluginPackages.filter((pkg) => {
+                  const q = search.toLowerCase();
+                  return (
+                    pkg.name.toLowerCase().includes(q) ||
+                    pkg.author.toLowerCase().includes(q) ||
+                    pkg.description.toLowerCase().includes(q)
+                  );
+                })
+              : pluginPackages
+            : (activeTab === "Versions" ? versionPackages : allPackages).filter(
+                (pkg) => {
+                  const matchesTab =
+                    activeTab === "Search" || activeTab === "Versions"
+                      ? true
+                      : pkg.category.includes(activeTab);
+                  if (!matchesTab) return false;
+                  if (!search.trim())
+                    return activeTab === "Search" ? false : true;
+                  const q = search.toLowerCase();
+                  return (
+                    pkg.name.toLowerCase().includes(q) ||
+                    pkg.author.toLowerCase().includes(q) ||
+                    pkg.description.toLowerCase().includes(q)
+                  );
+                },
+              );
 
   useEffect(() => {
     setFocusedIdx(null);
@@ -403,6 +557,70 @@ const WorkshopView = memo(function WorkshopView() {
     playBackSound();
     setSelectedPkg(null);
   }, [playBackSound]);
+
+  useEffect(() => {
+    if (!workshopTarget || loading) return;
+
+    if (workshopTarget.type === "lceonline" && serverPlugins.length === 0)
+      return;
+    if (workshopTarget.type === "plugin" && pluginPackages.length === 0) return;
+    if (workshopTarget.type === "version" && versionPackages.length === 0)
+      return;
+    if (!workshopTarget.type && allPackages.length === 0) return;
+
+    let pkg: RegistryPackage | undefined;
+    let tab: TabType | undefined;
+
+    switch (workshopTarget.type) {
+      case "lceonline":
+        pkg = serverPlugins.find((p) => p.id === workshopTarget.id);
+        tab = "Server Plugins";
+        break;
+      case "plugin":
+        pkg = pluginPackages.find((p) => p.id === workshopTarget.id);
+        tab = "Plugins";
+        break;
+      case "version":
+        pkg = versionPackages.find((p) => p.id === workshopTarget.id);
+        tab = "Versions";
+        break;
+      default:
+        pkg = allPackages.find((p) => p.id === workshopTarget.id);
+        if (!pkg) {
+          pkg = versionPackages.find((p) => p.id === workshopTarget.id);
+          if (pkg) tab = "Versions";
+        }
+        if (!pkg) {
+          pkg = serverPlugins.find((p) => p.id === workshopTarget.id);
+          if (pkg) tab = "Server Plugins";
+        }
+        if (!pkg) {
+          pkg = serverListings.find((p) => p.id === workshopTarget.id);
+          if (pkg) tab = "Server";
+        }
+        if (!pkg) {
+          pkg = pluginPackages.find((p) => p.id === workshopTarget.id);
+          if (pkg) tab = "Plugins";
+        }
+        break;
+    }
+
+    if (pkg) {
+      if (tab) setActiveTab(tab);
+      openModal(pkg);
+      onClearWorkshopTarget?.();
+    }
+  }, [
+    workshopTarget,
+    loading,
+    allPackages,
+    serverPlugins,
+    pluginPackages,
+    versionPackages,
+    serverListings,
+    openModal,
+    onClearWorkshopTarget,
+  ]);
 
   const toggleSavedServer = useCallback(async (serverPkg: RegistryPackage) => {
     if (!serverPkg.server_address) return;
@@ -459,11 +677,13 @@ const WorkshopView = memo(function WorkshopView() {
         playPressSound();
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
-        setFocusedIdx((p) => Math.min((p ?? -COLS) + COLS, count - 1));
+        setFocusedIdx((p) =>
+          Math.min((p ?? -1) + (isPluginTab ? 1 : COLS), count - 1),
+        );
         playPressSound();
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        setFocusedIdx((p) => Math.max((p ?? COLS) - COLS, 0));
+        setFocusedIdx((p) => Math.max((p ?? 1) - (isPluginTab ? 1 : COLS), 0));
         playPressSound();
       } else if (e.key === "Enter" && focusedIdx !== null) {
         const pkg = filteredItems[focusedIdx];
@@ -486,11 +706,13 @@ const WorkshopView = memo(function WorkshopView() {
   const isSearchTab = activeTab === "Search";
   const isInstalledTab = activeTab === "Installed";
   const isVersionTab = activeTab === "Versions";
+  const isPluginTab = activeTab === "Plugins";
   const showSearch =
     isSearchTab ||
     isInstalledTab ||
     isVersionTab ||
-    activeTab === "Plugins" ||
+    isPluginTab ||
+    activeTab === "Server Plugins" ||
     activeTab === "Server";
   return (
     <motion.div
@@ -500,290 +722,291 @@ const WorkshopView = memo(function WorkshopView() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: config.animationsEnabled ? 0.3 : 0 }}
-      className="flex flex-col items-center w-full max-w-6xl h-full max-h-full relative font-['Mojangles'] text-white select-none outline-none focus:outline-none"
+      className="flex flex-col items-center w-full h-full max-h-full relative font-['Mojangles'] text-white select-none outline-none focus:outline-none"
     >
-      <h2 className="text-2xl text-white mc-text-shadow mt-4 mb-6 border-b-2 border-[#373737] pb-2 w-[30%] max-w-[250px] text-center tracking-widest uppercase opacity-80 font-bold whitespace-nowrap px-4">
-        Workshop
-      </h2>
+      <div className="flex items-center justify-center gap-0 mb-4 w-full px-4">
+        <div
+          className="flex items-center gap-1 px-[11px] py-1 rounded-sm bg-[#696969] border-2 border-black"
+          style={{ boxShadow: "inset 0 0 0 2px #fff" }}
+        >
+          {CATEGORY_TABS.map((tab, i) => {
+            const isActive = tab === activeTab;
+            return (
+              <React.Fragment key={tab}>
+                {i > 0 && <div className="w-[2px] h-5 bg-[#777] shrink-0" />}
+                <button
+                  onClick={() => selectTab(tab)}
+                  className={`relative h-8 px-3 text-xs mc-text-shadow tracking-widest border-none outline-none cursor-pointer transition-colors rounded-sm ${
+                    isActive
+                      ? "text-[#FFFF55] bg-[#FFFF55]/10 shadow-[0_0_12px_rgba(255,255,85,0.15)]"
+                      : "text-[#aaa] hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  {tab.toUpperCase()}
+                </button>
+              </React.Fragment>
+            );
+          })}
+        </div>
 
-      <div className="flex items-center justify-center gap-2 mb-6 w-full flex-wrap px-4">
-        {ALL_TABS.map((tab) => {
-          const isActive = tab === activeTab;
-          const updateCount =
-            tab === "Installed"
-              ? allPackages.filter((p) => hasUpdate(p)).length
-              : 0;
-          return (
-            <button
-              key={tab}
-              onClick={() => selectTab(tab)}
-              className={`
-                relative h-10 px-6 text-lg mc-text-shadow tracking-widest border-none outline-none cursor-pointer transition-all
-                ${isActive ? "text-[#FFFF55] scale-105" : "text-white hover:text-[#FFFF55] hover:scale-105"}
-              `}
-              style={{
-                backgroundImage: isActive
-                  ? "url('/images/button_highlighted.png')"
-                  : "url('/images/Button_Background.png')",
-                backgroundSize: "100% 100%",
-                imageRendering: "pixelated",
-              }}
-            >
-              {tab.toUpperCase()}
-              {updateCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-[#FF5555] text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center font-bold mc-text-shadow border border-[#AA0000]">
-                  {updateCount}
-                </span>
-              )}
-            </button>
-          );
-        })}
+        <div
+          className="flex items-center gap-1 px-[11px] py-1 ml-3 rounded-sm bg-[#696969] border-2 border-black"
+          style={{ boxShadow: "inset 0 0 0 2px #fff" }}
+        >
+          {UTILITY_TABS.map((tab, i) => {
+            const isActive = tab === activeTab;
+            const updateCount =
+              tab === "Installed"
+                ? allPackages.filter((p) => hasUpdate(p)).length
+                : 0;
+            return (
+              <React.Fragment key={tab}>
+                {i > 0 && <div className="w-[2px] h-5 bg-[#777] shrink-0" />}
+                <button
+                  onClick={() => selectTab(tab)}
+                  className={`relative h-8 px-3 text-xs mc-text-shadow tracking-widest border-none outline-none cursor-pointer transition-colors rounded-sm ${
+                    isActive
+                      ? "text-[#FFFF55] bg-[#FFFF55]/10 shadow-[0_0_12px_rgba(255,255,85,0.15)]"
+                      : "text-[#aaa] hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  {tab.toUpperCase()}
+                  {updateCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 bg-[#FF5555] text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center font-bold mc-text-shadow border border-[#AA0000]">
+                      {updateCount}
+                    </span>
+                  )}
+                </button>
+              </React.Fragment>
+            );
+          })}
+        </div>
+
+        <div
+          className="flex items-center gap-1 px-[11px] py-1 ml-3 rounded-sm bg-[#696969] border-2 border-black"
+          style={{ boxShadow: "inset 0 0 0 2px #fff" }}
+        >
+          {SERVER_TABS.map((tab, i) => {
+            const isActive = tab === activeTab;
+            return (
+              <React.Fragment key={tab}>
+                {i > 0 && <div className="w-[2px] h-5 bg-[#777] shrink-0" />}
+                <button
+                  onClick={() => selectTab(tab)}
+                  className={`relative h-8 px-3 text-xs mc-text-shadow tracking-widest border-none outline-none cursor-pointer transition-colors rounded-sm ${
+                    isActive
+                      ? "text-[#FFFF55] bg-[#FFFF55]/10 shadow-[0_0_12px_rgba(255,255,85,0.15)]"
+                      : "text-[#aaa] hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  {tab.toUpperCase()}
+                </button>
+              </React.Fragment>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="w-[98%] flex-1 relative overflow-hidden">
-        <AnimatePresence mode="wait">
-          {showSearch ? (
-            <motion.div
-              key={isInstalledTab ? "installed-tab" : "search-tab"}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="absolute inset-0 flex flex-col pt-2"
-            >
-              <div className="flex items-center gap-3 px-6 pb-4">
-                <div
-                  className="flex items-center flex-1 h-12 px-4 border-2 border-[#444] bg-black/40 rounded shadow-inner"
-                  style={{
-                    backgroundImage: "url('/images/Button_Background2.png')",
-                    backgroundSize: "100% 100%",
-                    imageRendering: "pixelated",
+      <div className="w-[98%] max-w-6xl flex-1 relative overflow-hidden mc-options-bg">
+        {showSearch ? (
+          <div className="absolute inset-0 flex flex-col pt-2">
+            <div className="flex items-center gap-3 px-6 pb-4">
+              <div
+                className="flex items-center flex-1 h-12 px-4 border-2 border-[#444] bg-black/40 rounded shadow-inner"
+                style={{
+                  backgroundImage: "url('/images/Button_Background2.png')",
+                  backgroundSize: "100% 100%",
+                  imageRendering: "pixelated",
+                }}
+              >
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setFocusedIdx(null);
                   }}
-                >
-                  <input
-                    ref={searchRef}
-                    type="text"
-                    value={search}
-                    onChange={(e) => {
-                      setSearch(e.target.value);
-                      setFocusedIdx(null);
-                    }}
-                    placeholder={
-                      isInstalledTab
-                        ? "FILTER INSTALLED..."
-                        : isVersionTab
-                          ? "FILTER VERSIONS..."
-                          : activeTab === "Plugins"
+                  placeholder={
+                    isInstalledTab
+                      ? "FILTER INSTALLED..."
+                      : isVersionTab
+                        ? "FILTER VERSIONS..."
+                        : isPluginTab
+                          ? "FILTER PLUGINS..."
+                          : activeTab === "Server Plugins"
                             ? "FILTER PLUGINS..."
                             : activeTab === "Server"
                               ? "FILTER SERVERS..."
                               : "ENTER KEYWORDS..."
-                    }
-                    spellCheck={false}
-                    autoFocus={isSearchTab}
-                    className="bg-transparent border-none outline-none text-white text-lg mc-text-shadow w-full placeholder-white/40 font-['Mojangles'] tracking-widest"
-                  />
-                  {search && (
-                    <button
-                      onClick={() => {
-                        setSearch("");
-                        searchRef.current?.focus();
-                      }}
-                      className="text-white/60 hover:text-white text-lg ml-2 bg-transparent border-none outline-none cursor-pointer mc-text-shadow"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-              {activeTab === "Plugins" && serverCategories.length > 1 && (
-                <div className="flex items-center gap-2 px-6 pb-3 overflow-x-auto scroll-smooth">
-                  {serverCategories.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setServerCategory(cat)}
-                      className={`px-3 py-1 text-xs mc-text-shadow uppercase tracking-widest border outline-none cursor-pointer whitespace-nowrap transition-all ${
-                        serverCategory === cat
-                          ? "text-[#FFFF55] bg-black/60 border-[#FFFF55]"
-                          : "text-[#A0A0A0] bg-black/30 border-[#444] hover:text-white hover:border-[#888]"
-                      }`}
-                    >
-                      {cat === "all" ? "ALL" : cat.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {activeTab === "Server" && serverListingCategories.length > 1 && (
-                <div className="flex items-center gap-2 px-6 pb-3 overflow-x-auto scroll-smooth">
-                  {serverListingCategories.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setServerListingCategory(cat)}
-                      className={`px-3 py-1 text-xs mc-text-shadow uppercase tracking-widest border outline-none cursor-pointer whitespace-nowrap transition-all ${
-                        serverListingCategory === cat
-                          ? "text-[#FFFF55] bg-black/60 border-[#FFFF55]"
-                          : "text-[#A0A0A0] bg-black/30 border-[#444] hover:text-white hover:border-[#888]"
-                      }`}
-                    >
-                      {cat === "all" ? "ALL" : cat.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div
-                ref={gridRef}
-                className="flex-1 overflow-y-auto p-6 scroll-smooth"
-              >
-                {isInstalledTab && !search.trim() && filteredItems.length > 0 && (
-                  <div className="flex items-center justify-center gap-3 mb-4 pb-3 border-b border-[#333]">
-                    <button
-                      onClick={async () => {
-                        const updates = filteredItems.filter((p) => hasUpdate(p));
-                        if (updates.length === 0) return;
-                        playPressSound();
-                        for (const pkg of updates) {
-                          const entries = installedPkgs.filter((p) => p.packageId === pkg.id);
-                          for (const entry of entries) {
-                            try {
-                              await TauriService.workshopInstall(entry.instanceId, pkg.id, pkg.zips!, pkg.version);
-                            } catch (e) {
-                              console.error(e);
-                            }
-                          }
-                        }
-                        refreshInstalled();
-                      }}
-                      className="h-8 px-4 flex items-center justify-center text-sm mc-text-shadow border border-[#555] text-[#FFFF55] hover:bg-white/10 transition-colors"
-                      style={{
-                        backgroundImage: "url('/images/Button_Background.png')",
-                        backgroundSize: "100% 100%",
-                        imageRendering: "pixelated",
-                      }}
-                    >
-                      Update All ({filteredItems.filter((p) => hasUpdate(p)).length})
-                    </button>
-                    <button
-                      onClick={async () => {
-                        if (filteredItems.length === 0) return;
-                        playPressSound();
-                        for (const pkg of filteredItems) {
-                          const entries = installedPkgs.filter((p) => p.packageId === pkg.id);
-                          for (const entry of entries) {
-                            try {
-                              await TauriService.workshopInstall(entry.instanceId, pkg.id, pkg.zips!, pkg.version);
-                            } catch (e) {
-                              console.error(e);
-                            }
-                          }
-                        }
-                        refreshInstalled();
-                      }}
-                      className="h-8 px-4 flex items-center justify-center text-sm mc-text-shadow border border-[#555] text-white hover:bg-white/10 transition-colors"
-                      style={{
-                        backgroundImage: "url('/images/Button_Background.png')",
-                        backgroundSize: "100% 100%",
-                        imageRendering: "pixelated",
-                      }}
-                    >
-                      Reinstall All ({filteredItems.length})
-                    </button>
-                  </div>
+                  }
+                  spellCheck={false}
+                  autoFocus={isSearchTab}
+                  className="bg-transparent border-none outline-none text-white text-lg mc-text-shadow w-full placeholder-white/40 font-['Mojangles'] tracking-widest"
+                />
+                {search && (
+                  <button
+                    onClick={() => {
+                      setSearch("");
+                      searchRef.current?.focus();
+                    }}
+                    className="text-white/60 hover:text-white text-lg ml-2 bg-transparent border-none outline-none cursor-pointer mc-text-shadow"
+                  >
+                    ✕
+                  </button>
                 )}
-                {isSearchTab && !search.trim() ? (
-                  <div className="flex flex-col items-center justify-center h-[200px] opacity-40">
-                    <span className="text-xl mc-text-shadow tracking-widest uppercase">
-                      Start typing to search...
-                    </span>
-                  </div>
-                ) : loading ? (
-                  <div className="flex items-center justify-center h-full">
-                    <span className="text-3xl text-[#FFFF55] mc-text-shadow tracking-widest animate-pulse uppercase">
-                      Searching Archives...
-                    </span>
-                  </div>
-                ) : filteredItems.length === 0 ? (
-                  <div className="flex items-center justify-center h-full">
-                    <span className="text-2xl text-[#E0E0E0] mc-text-shadow uppercase tracking-widest opacity-60">
-                      {isInstalledTab
-                        ? "Nothing Installed"
-                        : activeTab === "Plugins"
+              </div>
+            </div>
+            {activeTab === "Server Plugins" && serverCategories.length > 1 && (
+              <div className="flex items-center gap-2 px-6 pb-3 overflow-x-auto scroll-smooth">
+                {serverCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setServerCategory(cat)}
+                    className={`px-3 py-1 text-xs mc-text-shadow uppercase tracking-widest border outline-none cursor-pointer whitespace-nowrap transition-all ${
+                      serverCategory === cat
+                        ? "text-[#FFFF55] bg-black/60 border-[#FFFF55]"
+                        : "text-[#A0A0A0] bg-black/30 border-[#444] hover:text-white hover:border-[#888]"
+                    }`}
+                  >
+                    {cat === "all" ? "ALL" : cat.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+            {activeTab === "Server" && serverListingCategories.length > 1 && (
+              <div className="flex items-center gap-2 px-6 pb-3 overflow-x-auto scroll-smooth">
+                {serverListingCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setServerListingCategory(cat)}
+                    className={`px-3 py-1 text-xs mc-text-shadow uppercase tracking-widest border outline-none cursor-pointer whitespace-nowrap transition-all ${
+                      serverListingCategory === cat
+                        ? "text-[#FFFF55] bg-black/60 border-[#FFFF55]"
+                        : "text-[#A0A0A0] bg-black/30 border-[#444] hover:text-white hover:border-[#888]"
+                    }`}
+                  >
+                    {cat === "all" ? "ALL" : cat.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div
+              ref={gridRef}
+              className="flex-1 overflow-y-auto p-6 scroll-smooth"
+            >
+              {isInstalledTab && !search.trim() && filteredItems.length > 0 && (
+                <div className="flex items-center justify-center gap-3 mb-4 pb-3 border-b border-[#333]">
+                  <button
+                    onClick={async () => {
+                      const updates = filteredItems.filter((p) => hasUpdate(p));
+                      if (updates.length === 0) return;
+                      playPressSound();
+                      for (const pkg of updates) {
+                        const entries = installedPkgs.filter(
+                          (p) => p.packageId === pkg.id,
+                        );
+                        for (const entry of entries) {
+                          try {
+                            await TauriService.workshopInstall(
+                              entry.instanceId,
+                              pkg.id,
+                              pkg.zips!,
+                              pkg.version,
+                            );
+                          } catch (e) {
+                            console.error(e);
+                          }
+                        }
+                      }
+                      refreshInstalled();
+                    }}
+                    className="h-8 px-4 flex items-center justify-center text-sm mc-text-shadow border border-[#555] text-[#FFFF55]"
+                    style={{
+                      backgroundImage: "url('/images/Button_Background.png')",
+                      backgroundSize: "100% 100%",
+                      imageRendering: "pixelated",
+                    }}
+                  >
+                    Update All (
+                    {filteredItems.filter((p) => hasUpdate(p)).length})
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (filteredItems.length === 0) return;
+                      playPressSound();
+                      for (const pkg of filteredItems) {
+                        const entries = installedPkgs.filter(
+                          (p) => p.packageId === pkg.id,
+                        );
+                        for (const entry of entries) {
+                          try {
+                            await TauriService.workshopInstall(
+                              entry.instanceId,
+                              pkg.id,
+                              pkg.zips!,
+                              pkg.version,
+                            );
+                          } catch (e) {
+                            console.error(e);
+                          }
+                        }
+                      }
+                      refreshInstalled();
+                    }}
+                    className="h-8 px-4 flex items-center justify-center text-sm mc-text-shadow border border-[#555] text-white"
+                    style={{
+                      backgroundImage: "url('/images/Button_Background.png')",
+                      backgroundSize: "100% 100%",
+                      imageRendering: "pixelated",
+                    }}
+                  >
+                    Reinstall All ({filteredItems.length})
+                  </button>
+                </div>
+              )}
+              {isSearchTab && !search.trim() ? (
+                <div className="flex flex-col items-center justify-center h-[200px] opacity-40">
+                  <span className="text-xl mc-text-shadow tracking-widest uppercase">
+                    Start typing to search...
+                  </span>
+                </div>
+              ) : loading ? (
+                <div className="flex items-center justify-center h-full">
+                  <span className="text-3xl text-[#FFFF55] mc-text-shadow tracking-widest animate-pulse uppercase">
+                    Searching Archives...
+                  </span>
+                </div>
+              ) : filteredItems.length === 0 ? (
+                <div className="flex items-center justify-center h-full">
+                  <span className="text-2xl text-[#E0E0E0] mc-text-shadow uppercase tracking-widest opacity-60">
+                    {isInstalledTab
+                      ? "Nothing Installed"
+                      : activeTab === "Plugins"
+                        ? "No plugins available"
+                        : activeTab === "Server Plugins"
                           ? "No plugins available"
                           : activeTab === "Server"
                             ? "No servers available"
                             : "No results"}
-                    </span>
-                  </div>
-                ) : (
-                  <div
-                    className="grid gap-6"
-                    style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}
-                  >
-                    {filteredItems.map((pkg, i) => (
-                      <PackageCard
-                        key={pkg.id}
-                        pkg={pkg}
-                        index={i}
-                        focused={focusedIdx === i}
-                        onHover={() => setFocusedIdx(i)}
-                        onClick={() => openModal(pkg)}
-                        installed={isInstalled(pkg.id)}
-                        hasUpdate={hasUpdate(pkg)}
-                        isVersionTab={isVersionTab}
-                      />
-                    ))}
-                  </div>
-                )}
-                {(activeTab === "Plugins" || activeTab === "Server") && (
-                  <div className="flex justify-center pt-4 pb-2">
-                    <img
-                      src="/images/bytebukkit.png"
-                      alt="ByteBukkit"
-                      className="h-5 opacity-70 cursor-pointer hover:opacity-100 transition-opacity"
-                      onClick={() =>
-                        TauriService.openUrl("https://bytebukkit.github.io")
-                      }
-                    />
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          ) : loading ? (
-            <motion.div
-              key="loading"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 flex items-center justify-center"
-            >
-              <span className="text-3xl text-[#FFFF55] mc-text-shadow tracking-widest animate-pulse uppercase">
-                Searching Archives...
-              </span>
-            </motion.div>
-          ) : error ? (
-            <motion.div
-              key="error"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 flex items-center justify-center"
-            >
-              <span className="text-xl text-red-500 mc-text-shadow uppercase tracking-widest">
-                {error}
-              </span>
-            </motion.div>
-          ) : (
-            <motion.div
-              key={activeTab}
-              ref={gridRef}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="absolute inset-0 overflow-y-auto p-6 scroll-smooth"
-            >
-              {filteredItems.length === 0 ? (
-                <div className="flex items-center justify-center h-full">
-                  <span className="text-2xl text-[#E0E0E0] mc-text-shadow uppercase tracking-widest opacity-40">
-                    Empty category
                   </span>
+                </div>
+              ) : isPluginTab ? (
+                <div className="flex flex-col gap-2">
+                  {filteredItems.map((pkg, i) => (
+                    <PackageCard
+                      key={pkg.id}
+                      pkg={pkg}
+                      index={i}
+                      focused={focusedIdx === i}
+                      onHover={() => setFocusedIdx(i)}
+                      onClick={() => openModal(pkg)}
+                      installed={isInstalled(pkg.id)}
+                      hasUpdate={hasUpdate(pkg)}
+                      isVersionTab={isVersionTab}
+                      isPluginTab={isPluginTab}
+                    />
+                  ))}
                 </div>
               ) : (
                 <div
@@ -805,48 +1028,138 @@ const WorkshopView = memo(function WorkshopView() {
                   ))}
                 </div>
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
+              {(activeTab === "Server Plugins" || activeTab === "Server") && (
+                <div className="flex justify-center pt-4 pb-2">
+                  <img
+                    src="/images/lceonline.png"
+                    alt="LCEOnline"
+                    className="h-5 opacity-70 cursor-pointer"
+                    onClick={() =>
+                      TauriService.openUrl("https://mclegacyedition.xyz/")
+                    }
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        ) : loading ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-3xl text-[#FFFF55] mc-text-shadow tracking-widest animate-pulse uppercase">
+              Searching Archives...
+            </span>
+          </div>
+        ) : error ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-xl text-red-500 mc-text-shadow uppercase tracking-widest">
+              {error}
+            </span>
+          </div>
+        ) : (
+          <div
+            ref={gridRef}
+            className="absolute inset-0 overflow-y-auto p-6 scroll-smooth"
+          >
+            {filteredItems.length === 0 ? (
+              <div className="flex items-center justify-center h-full">
+                <span className="text-2xl text-[#E0E0E0] mc-text-shadow uppercase tracking-widest opacity-40">
+                  Empty category
+                </span>
+              </div>
+            ) : isPluginTab ? (
+              <div className="flex flex-col gap-2">
+                {filteredItems.map((pkg, i) => (
+                  <PackageCard
+                    key={pkg.id}
+                    pkg={pkg}
+                    index={i}
+                    focused={focusedIdx === i}
+                    onHover={() => setFocusedIdx(i)}
+                    onClick={() => openModal(pkg)}
+                    installed={isInstalled(pkg.id)}
+                    hasUpdate={hasUpdate(pkg)}
+                    isVersionTab={isVersionTab}
+                    isPluginTab={isPluginTab}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div
+                className="grid gap-6"
+                style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}
+              >
+                {filteredItems.map((pkg, i) => (
+                  <PackageCard
+                    key={pkg.id}
+                    pkg={pkg}
+                    index={i}
+                    focused={focusedIdx === i}
+                    onHover={() => setFocusedIdx(i)}
+                    onClick={() => openModal(pkg)}
+                    installed={isInstalled(pkg.id)}
+                    hasUpdate={hasUpdate(pkg)}
+                    isVersionTab={isVersionTab}
+                    isPluginTab={isPluginTab}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="w-full mt-6 mb-4 flex justify-center">
-        <button
-          onClick={() => {
-            playBackSound();
-            setActiveView("main");
-          }}
-          className="w-72 h-10 flex items-center justify-center text-xl mc-text-shadow hover:text-[#FFFF55] text-white border-none outline-none transition-all"
-          style={{
-            backgroundImage: "url('/images/Button_Background.png')",
-            backgroundSize: "100% 100%",
-            imageRendering: "pixelated",
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.backgroundImage =
-              "url('/images/button_highlighted.png')";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.backgroundImage =
-              "url('/images/Button_Background.png')";
-          }}
-        >
-          Back
-        </button>
-      </div>
+      {!isAndroid && (
+        <div className="w-full mt-6 mb-4 flex justify-center">
+          <button
+            onClick={() => {
+              playBackSound();
+              setActiveView("main");
+            }}
+            className="w-72 h-10 flex items-center justify-center text-xl mc-text-shadow hover:text-[#FFFF55] text-white border-none outline-none transition-all"
+            style={{
+              backgroundImage: "url('/images/Button_Background.png')",
+              backgroundSize: "100% 100%",
+              imageRendering: "pixelated",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundImage =
+                "url('/images/button_highlighted.png')";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundImage =
+                "url('/images/Button_Background.png')";
+            }}
+          >
+            Back
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
         {selectedPkg && (
           <PackageModal
             pkg={selectedPkg}
+            allPackages={allPackages}
+            versionPackages={versionPackages}
+            customEditions={config.customEditions || []}
+            installedPkgs={installedPkgs}
             onClose={closeModal}
             playPressSound={playPressSound}
-            installedEntries={getInstalledEntries(selectedPkg.id)}
-            onInstallComplete={refreshInstalled}
-            onUninstallComplete={refreshInstalled}
+            installedEntries={getInstalledEntries(
+              selectedPkg.id,
+              selectedPkg.version,
+            )}
+            onInstallComplete={() => {
+              refreshInstalled();
+              refreshInstalledPlugins();
+            }}
+            onUninstallComplete={() => {
+              refreshInstalled();
+              refreshInstalledPlugins();
+            }}
             isVersionTab={activeTab === "Versions"}
-            isServerTab={activeTab === "Plugins"}
+            isServerTab={activeTab === "Server Plugins"}
             isGameServerTab={activeTab === "Server"}
+            isPluginTab={isPluginTab}
             isSaved={
               selectedPkg.server_address
                 ? savedServers.has(selectedPkg.server_address)
@@ -869,6 +1182,7 @@ function PackageCard({
   installed,
   hasUpdate,
   isVersionTab,
+  isPluginTab,
 }: {
   pkg: RegistryPackage;
   index: number;
@@ -878,6 +1192,7 @@ function PackageCard({
   installed: boolean;
   hasUpdate: boolean;
   isVersionTab?: boolean;
+  isPluginTab?: boolean;
 }) {
   const thumbnailUrl = pkg.thumbnail.startsWith("http")
     ? pkg.thumbnail
@@ -890,55 +1205,59 @@ function PackageCard({
       data-card={index}
       onMouseEnter={onHover}
       onClick={onClick}
-      className={`flex flex-col cursor-pointer transition-all border-2 ${focused ? "border-[#FFFF55] scale-105 z-10" : "border-[#333] hover:border-[#FFFF55]"} rounded-sm overflow-hidden bg-black/40`}
+      className={`flex flex-col cursor-pointer border-2 ${focused ? "border-[#FFFF55] z-10" : "border-[#333]"} rounded-sm overflow-hidden ${isPluginTab ? "bg-black/80" : "bg-black/40"}`}
       style={{
-        backgroundImage: "url('/images/frame_background.png')",
+        backgroundImage: isPluginTab
+          ? "url('/images/Button_Background2.png')"
+          : "url('/images/frame_background.png')",
         backgroundSize: "100% 100%",
         imageRendering: "pixelated",
         boxShadow: focused ? "0 0 20px rgba(255, 255, 85, 0.2)" : "none",
       }}
     >
-      <div
-        className={`w-full relative flex items-center justify-center overflow-hidden bg-black/50 border-b border-[#333] ${pkg.thumbnail.startsWith("http") ? "aspect-square" : "h-[120px]"}`}
-      >
-        {imgError ? (
-          <span className="text-[#555] text-sm mc-text-shadow uppercase tracking-widest">
-            No Image
-          </span>
-        ) : (
-          <img
-            src={thumbnailUrl}
-            alt={pkg.name}
-            className={`w-full h-full transition-transform ${pkg.thumbnail.startsWith("http") ? "object-contain p-2" : "object-cover group-hover:scale-110"}`}
-            style={{ imageRendering: "pixelated" }}
-            onError={() => setImgError(true)}
-          />
-        )}
-        <div className="absolute top-1 right-1 flex gap-1">
-          {pkg.category.slice(0, 1).map((c) => (
-            <span
-              key={c}
-              className="text-[8px] bg-black/80 border border-[#555] px-1.5 py-0.5 text-[#FFFF55] mc-text-shadow uppercase tracking-tighter"
-            >
-              {c}
+      {pkg.thumbnail ? (
+        <div
+          className={`w-full relative flex items-center justify-center overflow-hidden bg-black/50 border-b border-[#333] ${pkg.thumbnail.startsWith("http") ? "aspect-square" : "h-[120px]"}`}
+        >
+          {!thumbnailUrl || imgError ? (
+            <span className="text-[#555] text-sm mc-text-shadow uppercase tracking-widest">
+              No Image
             </span>
-          ))}
+          ) : (
+            <img
+              src={thumbnailUrl}
+              alt={pkg.name}
+              className={`w-full h-full ${pkg.thumbnail.startsWith("http") ? "object-contain p-2" : "object-cover"}`}
+              style={{ imageRendering: "pixelated" }}
+              onError={() => setImgError(true)}
+            />
+          )}
+          <div className="absolute top-1 right-1 flex gap-1">
+            {pkg.category.slice(0, 1).map((c) => (
+              <span
+                key={c}
+                className="text-[8px] bg-black/80 border border-[#555] px-1.5 py-0.5 text-[#FFFF55] mc-text-shadow uppercase tracking-tighter"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+          {hasUpdate && (
+            <div className="absolute top-1 left-1">
+              <span className="text-[8px] bg-[#FF8800]/90 border border-[#FF6600] px-1.5 py-0.5 text-white mc-text-shadow uppercase tracking-tighter">
+                Update
+              </span>
+            </div>
+          )}
+          {installed && !hasUpdate && (
+            <div className="absolute top-1 left-1">
+              <span className="text-[8px] bg-[#55FF55] border border-[#55FF55]/60 px-1.5 py-0.5 text-[#003300] mc-text-shadow uppercase tracking-tighter shadow-sm font-bold">
+                {isVersionTab ? "Added" : "Installed"}
+              </span>
+            </div>
+          )}
         </div>
-        {hasUpdate && (
-          <div className="absolute top-1 left-1">
-            <span className="text-[8px] bg-[#FF8800]/90 border border-[#FF6600] px-1.5 py-0.5 text-white mc-text-shadow uppercase tracking-tighter">
-              Update
-            </span>
-          </div>
-        )}
-        {installed && !hasUpdate && (
-          <div className="absolute top-1 left-1">
-            <span className="text-[8px] bg-[#55FF55] border border-[#55FF55]/60 px-1.5 py-0.5 text-[#003300] mc-text-shadow uppercase tracking-tighter shadow-sm font-bold">
-              {isVersionTab ? "Added" : "Installed"}
-            </span>
-          </div>
-        )}
-      </div>
+      ) : null}
       <div className="flex flex-col p-3 gap-1 relative bg-gradient-to-b from-transparent to-black/20">
         <span
           className={`text-base mc-text-shadow leading-tight truncate font-bold tracking-wide ${focused ? "text-[#FFFF55]" : "text-white"}`}
@@ -963,6 +1282,10 @@ function PackageCard({
 
 function PackageModal({
   pkg,
+  allPackages,
+  versionPackages,
+  customEditions,
+  installedPkgs,
   onClose,
   playPressSound,
   installedEntries,
@@ -971,10 +1294,15 @@ function PackageModal({
   isVersionTab,
   isServerTab,
   isGameServerTab,
+  isPluginTab,
   isSaved,
   onToggleSave,
 }: {
   pkg: RegistryPackage;
+  allPackages: RegistryPackage[];
+  versionPackages: RegistryPackage[];
+  customEditions: CustomEdition[];
+  installedPkgs: InstalledWorkshopPackage[];
   onClose: () => void;
   playPressSound: () => void;
   installedEntries: InstalledWorkshopPackage[];
@@ -983,6 +1311,7 @@ function PackageModal({
   isVersionTab?: boolean;
   isServerTab?: boolean;
   isGameServerTab?: boolean;
+  isPluginTab?: boolean;
   isSaved?: boolean;
   onToggleSave?: (pkg: RegistryPackage) => void;
 }) {
@@ -991,16 +1320,26 @@ function PackageModal({
     ? pkg.thumbnail
     : isVersionTab
       ? `${VERSIONS_BASE}/${pkg.id}/${pkg.thumbnail}`
-      : `${RAW_BASE}/${pkg.id}/${pkg.thumbnail}`;
+      : isPluginTab || !pkg.thumbnail
+        ? ""
+        : `${RAW_BASE}/${pkg.id}/${pkg.thumbnail}`;
   const [imgError, setImgError] = useState(false);
   const [modalFocus, setModalFocus] = useState<
     "install" | "uninstall" | "close"
   >("install");
   const [showInstall, setShowInstall] = useState(false);
   const [showUninstall, setShowUninstall] = useState(false);
+  const [confirmingDeps, setConfirmingDeps] = useState(false);
   const hasInstalled = installedEntries.length > 0;
   const needsUpdate =
     hasInstalled && installedEntries.some((e) => e.version !== pkg.version);
+  const unresolvedDeps = useMemo(
+    () =>
+      (pkg.dependencies || []).filter(
+        (depId) => !installedPkgs.some((p) => p.packageId === depId),
+      ),
+    [pkg.dependencies, installedPkgs],
+  );
   const focusOptions: Array<"install" | "uninstall" | "close"> = isGameServerTab
     ? ["install", "close"]
     : isServerTab
@@ -1051,13 +1390,11 @@ function PackageModal({
       try {
         const path = await TauriService.saveFileDialog(
           "Save Server Plugin",
-          pkg.file_name || `${pkg.name}.dll`,
+          `${pkg.name}.dll`,
           ["*.dll", "*"],
         );
         if (!path) return;
-        const response = await fetch(
-          `${BYTEBUKKIT_BASE}/api/addons/${pkg.id}/download`,
-        );
+        const response = await fetch(`${pkg.download_url}`);
         const blob = await response.blob();
         const buffer = await blob.arrayBuffer();
         await TauriService.writeBinaryFile(path, new Uint8Array(buffer));
@@ -1082,8 +1419,17 @@ function PackageModal({
       } catch (e) {
         console.error(e);
       }
-    } else {
+    } else if (isPluginTab) {
       setShowInstall(true);
+    } else {
+      const unresolvedDeps = (pkg.dependencies || []).filter(
+        (depId) => !installedPkgs.some((p) => p.packageId === depId),
+      );
+      if (unresolvedDeps.length > 0) {
+        setConfirmingDeps(true);
+      } else {
+        setShowInstall(true);
+      }
     }
   };
 
@@ -1097,91 +1443,109 @@ function PackageModal({
         ? hasInstalled
           ? "ADDED"
           : "ADD"
-        : !hasInstalled
-          ? "INSTALL"
-          : needsUpdate
-            ? "UPDATE"
-            : "REINSTALL";
+        : isPluginTab
+          ? hasInstalled
+            ? needsUpdate
+              ? "UPDATE"
+              : "REINSTALL"
+            : "INSTALL"
+          : !hasInstalled
+            ? "INSTALL"
+            : needsUpdate
+              ? "UPDATE"
+              : "REINSTALL";
   return (
     <>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/85 backdrop-blur-sm"
+      <div
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-black/85"
         onClick={onClose}
       >
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 20, opacity: 0 }}
-          transition={{ duration: 0.2 }}
+        <div
           onClick={(e) => e.stopPropagation()}
-          className="flex flex-col w-[640px] max-h-[85vh] overflow-hidden font-['Mojangles'] border-2 border-[#555] rounded-sm"
-          style={{
-            backgroundImage: "url('/images/frame_background.png')",
-            backgroundSize: "100% 100%",
-            imageRendering: "pixelated",
-          }}
+          className="flex flex-col w-[640px] max-h-[85vh] overflow-hidden font-['Mojangles'] mc-options-bg"
         >
-          <div className="w-full h-[240px] flex-shrink-0 bg-black/60 overflow-hidden relative border-b border-[#444]">
-            {imgError ? (
-              <div className="absolute inset-0 flex items-center justify-center opacity-20">
-                <span className="text-4xl mc-text-shadow uppercase tracking-widest">
-                  No Image
+          {isPluginTab ? (
+            <div className="w-full h-[100px] flex-shrink-0 bg-black/60 flex items-center px-6 border-b border-[#444]">
+              <div className="flex flex-col">
+                <span className="text-3xl text-white mc-text-shadow block leading-tight tracking-wide font-bold">
+                  {pkg.name}
+                </span>
+                <span className="text-base text-[#FFFF55] mc-text-shadow uppercase tracking-widest opacity-90">
+                  By {pkg.author}
                 </span>
               </div>
-            ) : (
-              <img
-                src={thumbnailUrl}
-                alt={pkg.name}
-                className="w-full h-full object-cover"
-                style={{ imageRendering: "pixelated" }}
-                onError={() => setImgError(true)}
-              />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
-            <div className="absolute bottom-4 left-6 right-6">
-              <span className="text-3xl text-white mc-text-shadow block leading-tight tracking-wide font-bold">
-                {pkg.name}
-              </span>
-              <span className="text-base text-[#FFFF55] mc-text-shadow uppercase tracking-widest opacity-90">
-                By {pkg.author}
-              </span>
             </div>
-            {needsUpdate && (
-              <div className="absolute top-3 right-3 bg-[#FF8800] border border-[#FF6600] px-2 py-1">
-                <span className="text-[10px] text-white mc-text-shadow uppercase tracking-widest">
-                  Update Available
+          ) : (
+            <div className="w-full h-[240px] flex-shrink-0 bg-black/60 overflow-hidden relative border-b border-[#444]">
+              {!thumbnailUrl || imgError ? (
+                <div className="absolute inset-0 flex items-center justify-center opacity-20">
+                  <span className="text-4xl mc-text-shadow uppercase tracking-widest">
+                    No Image
+                  </span>
+                </div>
+              ) : (
+                <img
+                  src={thumbnailUrl}
+                  alt={pkg.name}
+                  className="w-full h-full object-cover"
+                  style={{ imageRendering: "pixelated" }}
+                  onError={() => setImgError(true)}
+                />
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+              <div className="absolute bottom-4 left-6 right-6">
+                <span className="text-3xl text-white mc-text-shadow block leading-tight tracking-wide font-bold">
+                  {pkg.name}
+                </span>
+                <span className="text-base text-[#FFFF55] mc-text-shadow uppercase tracking-widest opacity-90">
+                  By {pkg.author}
                 </span>
               </div>
-            )}
-            {hasInstalled && !needsUpdate && (
-              <div className="absolute top-3 right-3 bg-[#003300] border border-[#55FF55]/60 px-2 py-1">
-                <span className="text-[10px] text-[#55FF55] mc-text-shadow uppercase tracking-widest">
-                  Installed
-                </span>
-              </div>
-            )}
-            {isGameServerTab && isSaved && (
-              <div className="absolute top-3 right-3 bg-[#003300] border border-[#55FF55]/60 px-2 py-1">
-                <span className="text-[10px] text-[#55FF55] mc-text-shadow uppercase tracking-widest">
-                  Saved
-                </span>
-              </div>
-            )}
-          </div>
+              {needsUpdate && (
+                <div className="absolute top-3 right-3 bg-[#FF8800] border border-[#FF6600] px-2 py-1">
+                  <span className="text-[10px] text-white mc-text-shadow uppercase tracking-widest">
+                    Update Available
+                  </span>
+                </div>
+              )}
+              {hasInstalled && !needsUpdate && (
+                <div className="absolute top-3 right-3 bg-[#003300] border border-[#55FF55]/60 px-2 py-1">
+                  <span className="text-[10px] text-[#55FF55] mc-text-shadow uppercase tracking-widest">
+                    Installed
+                  </span>
+                </div>
+              )}
+              {isGameServerTab && isSaved && (
+                <div className="absolute top-3 right-3 bg-[#003300] border border-[#55FF55]/60 px-2 py-1">
+                  <span className="text-[10px] text-[#55FF55] mc-text-shadow uppercase tracking-widest">
+                    Saved
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-col p-6 gap-6 overflow-y-auto flex-1">
             <div className="space-y-4">
+              {pkg.description && pkg.description.trim() !== "" && (
+                <p className="text-sm text-[#CCCCCC] mc-text-shadow leading-relaxed">
+                  {pkg.description}
+                </p>
+              )}
               {pkg.extended_description &&
                 pkg.extended_description.trim() !== "" && (
-                  <div className="space-y-2 bg-black/20 p-4 border border-[#333] rounded-sm">
-                    <span className="text-[10px] text-[#555] mc-text-shadow uppercase tracking-[0.2em] font-bold">
-                      Plugin Description
+                  <div className="space-y-2 p-4 border border-[#444] bg-black/40">
+                    <span className="text-[10px] text-[#AAAAAA] mc-text-shadow uppercase tracking-[0.2em] font-bold">
+                      Details
                     </span>
-                    <div className="text-sm text-[#A0A0A0] mc-text-shadow leading-relaxed workshop-markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    <div className="text-sm text-white mc-text-shadow leading-relaxed workshop-markdown">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[
+                          rehypeRaw,
+                          [rehypeSanitize, defaultSchema],
+                        ]}
+                      >
                         {pkg.extended_description}
                       </ReactMarkdown>
                     </div>
@@ -1189,9 +1553,9 @@ function PackageModal({
                 )}
             </div>
 
-            <div className="grid grid-cols-2 gap-8 pt-4 border-t border-[#333]">
+            <div className="grid grid-cols-2 gap-8 pt-4 border-t border-[#444]">
               <div className="flex flex-col gap-1.5">
-                <span className="text-[10px] text-[#666] mc-text-shadow uppercase tracking-[0.2em] font-bold">
+                <span className="text-[10px] text-[#888] mc-text-shadow uppercase tracking-[0.2em] font-bold">
                   Metadata
                 </span>
                 <div className="flex flex-col gap-1">
@@ -1215,7 +1579,7 @@ function PackageModal({
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-[#888] mc-text-shadow">
-                          Console:
+                          Version:
                         </span>
                         <span className="text-white mc-text-shadow">
                           {pkg.version}
@@ -1278,7 +1642,7 @@ function PackageModal({
                           File:
                         </span>
                         <span className="text-white mc-text-shadow truncate ml-2">
-                          {pkg.file_name || "N/A"}
+                          {pkg.name || "N/A"}
                         </span>
                       </div>
                       {pkg.file_size && (
@@ -1360,27 +1724,97 @@ function PackageModal({
                 </div>
               </div>
             </div>
+            {pkg.dependencies && pkg.dependencies.length > 0 && (
+              <div className="flex flex-col gap-1.5 pt-4 border-t border-[#333]">
+                <span className="text-[10px] text-[#FFAA33] mc-text-shadow uppercase tracking-[0.2em] font-bold">
+                  Required Dependencies
+                </span>
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {pkg.dependencies.map((depId) => {
+                    const dep = allPackages.find((p) => p.id === depId);
+                    const isDepInstalled = installedPkgs.some(
+                      (p) => p.packageId === depId,
+                    );
+                    return (
+                      <span
+                        key={depId}
+                        className={`text-[10px] border px-2 py-0.5 mc-text-shadow uppercase tracking-widest ${
+                          isDepInstalled
+                            ? "bg-[#003300] border-[#55FF55]/60 text-[#55FF55]"
+                            : "bg-black/60 border-[#FF8800]/40 text-[#FFAA33]"
+                        }`}
+                      >
+                        {dep?.name || depId}
+                        {isDepInstalled ? " (installed)" : ""}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {pkg.required_versions && pkg.required_versions.length > 0 && (
+              <div className="flex flex-col gap-1.5 pt-4 border-t border-[#333]">
+                <span className="text-[10px] text-[#55AAFF] mc-text-shadow uppercase tracking-[0.2em] font-bold">
+                  Required Editions
+                </span>
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {pkg.required_versions.map((verId) => {
+                    const builtin = BASE_EDITIONS.find((e) => e.id === verId);
+                    const versionPkg = versionPackages.find(
+                      (v) => v.id === verId,
+                    );
+                    const customEd = customEditions.find((e) => e.id === verId);
+                    const displayName =
+                      builtin?.name || customEd?.name || versionPkg?.name;
+                    if (!displayName) return null;
+                    return (
+                      <span
+                        key={verId}
+                        className="text-[10px] bg-black/60 border border-[#55AAFF]/40 px-2 py-0.5 text-[#55AAFF] mc-text-shadow uppercase tracking-widest"
+                      >
+                        {displayName}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {pkg.zips && Object.keys(pkg.zips).length > 0 && (
               <div className="flex flex-col gap-3 pt-4 border-t border-[#333]">
                 <span className="text-[10px] text-[#666] mc-text-shadow uppercase tracking-[0.2em] font-bold">
                   Files
                 </span>
                 <div className="space-y-1.5">
-                  {Object.entries(pkg.zips).map(([file, dest]) => (
-                    <div
-                      key={file}
-                      className="flex items-center justify-between gap-4 bg-black/20 p-2 rounded-sm border border-[#222]"
-                    >
-                      <span className="text-xs text-[#A0A0A0] mc-text-shadow font-mono">
-                        {file}
-                      </span>
-                      {dest && (
-                        <span className="text-[9px] text-[#fff] mc-text-shadow truncate uppercase tracking-tighter">
-                          {dest}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                  {groupZips(pkg.zips).map((group) => {
+                    const isSplit = group.parts.length > 1;
+                    return (
+                      <div
+                        key={group.main}
+                        className="flex items-center justify-between gap-4 bg-black/20 p-2 rounded-sm border border-[#222]"
+                      >
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="text-xs text-[#A0A0A0] mc-text-shadow font-mono">
+                            {group.main}
+                            {isSplit && (
+                              <span className="ml-2 text-[8px] text-[#FFFF55] bg-black/60 border border-[#555] px-1.5 py-0.5 uppercase tracking-widest">
+                                Split archive · {group.parts.length} parts
+                              </span>
+                            )}
+                          </span>
+                          {isSplit && (
+                            <span className="text-[9px] text-[#666] mc-text-shadow font-mono">
+                              {group.parts.slice(1).join(", ")}
+                            </span>
+                          )}
+                        </div>
+                        {group.dest && (
+                          <span className="text-[9px] text-[#fff] mc-text-shadow truncate uppercase tracking-tighter">
+                            {group.dest}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1389,7 +1823,7 @@ function PackageModal({
               <button
                 onMouseEnter={() => setModalFocus("install")}
                 onClick={handleAction}
-                className={`flex-1 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer transition-all ${modalFocus === "install" ? "text-[#FFFF55] scale-105" : "text-white"}`}
+                className={`flex-1 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer ${modalFocus === "install" ? "text-[#FFFF55]" : "text-white"}`}
                 style={{
                   backgroundImage:
                     modalFocus === "install"
@@ -1405,7 +1839,7 @@ function PackageModal({
                 <button
                   onMouseEnter={() => setModalFocus("uninstall")}
                   onClick={() => setShowUninstall(true)}
-                  className={`w-36 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer transition-all ${modalFocus === "uninstall" ? "text-[#FF5555] scale-105" : "text-white"}`}
+                  className={`w-36 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer ${modalFocus === "uninstall" ? "text-[#FF5555]" : "text-white"}`}
                   style={{
                     backgroundImage:
                       modalFocus === "uninstall"
@@ -1421,7 +1855,7 @@ function PackageModal({
               <button
                 onMouseEnter={() => setModalFocus("close")}
                 onClick={onClose}
-                className={`w-36 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer transition-all ${modalFocus === "close" ? "text-[#FFFF55] scale-105" : "text-white"}`}
+                className={`w-36 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer ${modalFocus === "close" ? "text-[#FFFF55]" : "text-white"}`}
                 style={{
                   backgroundImage:
                     modalFocus === "close"
@@ -1435,18 +1869,103 @@ function PackageModal({
               </button>
             </div>
           </div>
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
 
+      <AnimatePresence>
+        {confirmingDeps && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[250] flex items-center justify-center bg-black/80"
+            onClick={() => setConfirmingDeps(false)}
+          >
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 20, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              onClick={(e) => e.stopPropagation()}
+              className="flex flex-col w-[520px] font-['Mojangles'] text-white border-2 border-[#555] rounded-sm overflow-hidden"
+              style={{
+                backgroundImage: "url('/images/frame_background.png')",
+                backgroundSize: "100% 100%",
+                imageRendering: "pixelated",
+              }}
+            >
+              <div className="p-6 border-b border-[#555] bg-black/60">
+                <span className="text-2xl mc-text-shadow block font-bold tracking-wide text-[#FFAA33]">
+                  Dependencies Required
+                </span>
+                <span className="text-sm text-[#A0A0A0] mc-text-shadow uppercase tracking-widest opacity-80 mt-1">
+                  This package requires the following to be installed first
+                </span>
+              </div>
+              <div className="p-4 flex flex-col gap-2 max-h-[300px] overflow-y-auto">
+                {unresolvedDeps.map((depId) => {
+                  const dep = allPackages.find((p) => p.id === depId);
+                  return (
+                    <div
+                      key={depId}
+                      className="flex items-center justify-between p-3 border border-[#444] bg-black/20"
+                    >
+                      <span className="text-base mc-text-shadow text-white">
+                        {dep?.name || depId}
+                      </span>
+                      <span className="text-[10px] text-[#A0A0A0] mc-text-shadow uppercase tracking-widest">
+                        v{dep?.version || "?"}
+                      </span>
+                    </div>
+                  );
+                })}
+                <span className="text-xs text-[#888] mc-text-shadow mt-3 text-center">
+                  These will be installed automatically before the main package.
+                </span>
+              </div>
+              <div className="flex items-center gap-4 p-4 border-t border-[#555] bg-black/40">
+                <button
+                  onClick={() => setConfirmingDeps(false)}
+                  className="flex-1 h-10 flex items-center justify-center text-lg mc-text-shadow text-white"
+                  style={{
+                    backgroundImage: "url('/images/Button_Background.png')",
+                    backgroundSize: "100% 100%",
+                    imageRendering: "pixelated",
+                  }}
+                >
+                  CANCEL
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmingDeps(false);
+                    setShowInstall(true);
+                  }}
+                  className="flex-1 h-10 flex items-center justify-center text-lg mc-text-shadow text-[#FFFF55]"
+                  style={{
+                    backgroundImage: "url('/images/button_highlighted.png')",
+                    backgroundSize: "100% 100%",
+                    imageRendering: "pixelated",
+                  }}
+                >
+                  INSTALL
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {showInstall && (
           <InstallModal
             pkg={pkg}
+            allPackages={allPackages}
+            dependencies={unresolvedDeps}
             onClose={() => {
               setShowInstall(false);
               onInstallComplete();
             }}
             playPressSound={playPressSound}
+            isPluginTab={isPluginTab}
           />
         )}
       </AnimatePresence>
@@ -1461,6 +1980,7 @@ function PackageModal({
             }}
             playPressSound={playPressSound}
             isVersionTab={isVersionTab}
+            isPluginTab={isPluginTab}
           />
         )}
       </AnimatePresence>
@@ -1470,21 +1990,142 @@ function PackageModal({
 
 function InstallModal({
   pkg,
+  allPackages,
+  dependencies,
   onClose,
   playPressSound,
+  isPluginTab,
 }: {
   pkg: RegistryPackage;
+  allPackages: RegistryPackage[];
+  dependencies: string[];
   onClose: () => void;
   playPressSound: () => void;
+  isPluginTab?: boolean;
 }) {
   const game = useContext(GameContext);
-  const availableEditions =
-    game?.editions.filter((e) => game.installs.includes(e.id)) || [];
+  const matchingEditions =
+    pkg.required_versions && pkg.required_versions.length > 0
+      ? (game?.editions || []).filter((e) =>
+          pkg.required_versions!.some(
+            (rv) => e.id === rv || e.id.startsWith(rv + "_"),
+          ),
+        )
+      : game?.editions || [];
+  const editionOptions = matchingEditions.flatMap((ed) => {
+    const branches =
+      ed.branches && ed.branches.length > 0 ? ed.branches : ["Stable"];
+    return branches
+      .map((branch) => ({
+        label: branches.length > 1 ? `${ed.name} (${branch})` : ed.name,
+        instanceId: branch === "Stable" ? ed.id : `${ed.id}_${branch}`,
+      }))
+      .filter((opt) => game?.installs.includes(opt.instanceId));
+  });
   const [focusedIdx, setFocusedIdx] = useState(0);
   const [status, setStatus] = useState<
     "idle" | "installing" | "success" | "error"
   >("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [progressLabel, setProgressLabel] = useState<string | null>(null);
+  const [pkgPct, setPkgPct] = useState<Record<string, number>>({});
+
+  const installTargets = useMemo(() => {
+    const targets: { id: string; zips: number }[] = [];
+    for (const depId of dependencies) {
+      const dep = allPackages.find((p) => p.id === depId);
+      if (dep?.zips)
+        targets.push({ id: dep.id, zips: Object.keys(dep.zips).length });
+    }
+    if (pkg.zips)
+      targets.push({ id: pkg.id, zips: Object.keys(pkg.zips).length });
+    return targets;
+  }, [dependencies, allPackages, pkg.zips, pkg.id]);
+
+  const totalZips = installTargets.reduce((acc, t) => acc + t.zips, 0);
+
+  const overallProgress = useMemo(() => {
+    if (totalZips === 0) return 0;
+    let done = 0;
+    for (const t of installTargets) {
+      const pct = pkgPct[t.id];
+      if (pct !== undefined) done += (pct / 100) * t.zips;
+    }
+    return Math.min(100, Math.round((done / totalZips) * 100));
+  }, [pkgPct, installTargets, totalZips]);
+
+  const installPlugin = useCallback(async () => {
+    setStatus("installing");
+    setErrorMsg(null);
+    setProgress(0);
+    setProgressLabel(null);
+    playPressSound();
+    try {
+      const pluginsDir = await TauriService.getPluginsDir();
+      const pluginDir = `${pluginsDir}/${pkg.id}`;
+
+      await TauriService.createPluginDir(pkg.id);
+
+      const encoder = new TextEncoder();
+
+      const manifest = {
+        id: pkg.id,
+        name: pkg.name,
+        version: pkg.version,
+        author: pkg.author,
+        description: pkg.description,
+        extended_description: pkg.extended_description || "",
+        main: pkg.main || "main.js",
+        permissions: pkg.permissions || [],
+      };
+      await TauriService.writeBinaryFile(
+        `${pluginDir}/plugin.json`,
+        encoder.encode(JSON.stringify(manifest, null, 2)),
+      );
+
+      const pluginBaseUrl = `${RAW_BASE}/.00plugins/${pkg.id}`;
+
+      const allFiles = [pkg.main || "main.js", ...(pkg.files || [])];
+      for (let i = 0; i < allFiles.length; i++) {
+        const file = allFiles[i];
+        setProgressLabel(file);
+        setProgress(Math.round((i / allFiles.length) * 100));
+        const res = await TauriService.httpProxyRequest(
+          "GET",
+          `${pluginBaseUrl}/${file}`,
+          null,
+          {},
+        );
+        if (res.status !== 200) throw new Error(`Failed to download ${file}`);
+        await TauriService.writeBinaryFile(
+          `${pluginDir}/${file}`,
+          encoder.encode(res.body),
+        );
+        setProgress(Math.round(((i + 1) / allFiles.length) * 100));
+      }
+
+      await PluginManager.instance.reload();
+      setStatus("success");
+    } catch (e: unknown) {
+      console.error(e);
+      setStatus("error");
+      setErrorMsg(
+        e instanceof Error
+          ? e.message
+          : typeof e === "string"
+            ? e
+            : "Unknown error",
+      );
+    }
+  }, [pkg, playPressSound]);
+
+  useEffect(() => {
+    if (isPluginTab && status === "idle") {
+      installPlugin();
+    }
+  }, [isPluginTab, status, installPlugin]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       e.stopPropagation();
@@ -1504,22 +2145,50 @@ function InstallModal({
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
         playPressSound();
-        setFocusedIdx((p) => Math.min(p + 1, availableEditions.length - 1));
+        setFocusedIdx((p) => Math.min(p + 1, editionOptions.length - 1));
       } else if (e.key === "Enter") {
-        if (availableEditions.length > 0) {
-          installTo(availableEditions[focusedIdx].id);
+        if (editionOptions.length > 0) {
+          installTo(editionOptions[focusedIdx].instanceId);
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableEditions, focusedIdx, status, onClose, playPressSound]);
+  }, [editionOptions, focusedIdx, status, onClose, playPressSound]);
+
+  const installDeps = async (instanceId: string) => {
+    for (const depId of dependencies) {
+      const depPkg = allPackages.find((p) => p.id === depId);
+      if (!depPkg || !depPkg.zips) continue;
+      setProgressLabel(depPkg.name);
+      try {
+        await TauriService.workshopInstall(
+          instanceId,
+          depPkg.id,
+          depPkg.zips,
+          depPkg.version,
+        );
+      } catch (e) {
+        console.error(`Failed to install dependency ${depId}:`, e);
+      }
+    }
+  };
 
   const installTo = async (instanceId: string) => {
     setStatus("installing");
     setErrorMsg(null);
+    setProgress(0);
+    setProgressLabel(null);
+    setPkgPct({});
     playPressSound();
+    const unlisten = await TauriService.onWorkshopProgress((data) => {
+      setPkgPct((prev) => ({ ...prev, [data.packageId]: data.percent }));
+    });
     try {
+      if (dependencies.length > 0) {
+        await installDeps(instanceId);
+      }
+      setProgressLabel(pkg.name);
       await TauriService.workshopInstall(
         instanceId,
         pkg.id,
@@ -1530,7 +2199,15 @@ function InstallModal({
     } catch (e: unknown) {
       console.error(e);
       setStatus("error");
-      setErrorMsg(e instanceof Error ? e.message : typeof e === "string" ? e : "Unknown error");
+      setErrorMsg(
+        e instanceof Error
+          ? e.message
+          : typeof e === "string"
+            ? e
+            : "Unknown error",
+      );
+    } finally {
+      unlisten();
     }
   };
 
@@ -1557,10 +2234,12 @@ function InstallModal({
       >
         <div className="p-6 border-b border-[#555] bg-black/60">
           <span className="text-2xl mc-text-shadow block font-bold tracking-wide">
-            INSTALL CONTENT
+            {isPluginTab ? "INSTALL PLUGIN" : "INSTALL CONTENT"}
           </span>
           <span className="text-sm text-[#A0A0A0] mc-text-shadow uppercase tracking-widest opacity-80 mt-1">
-            Target Edition for "{pkg.name}"
+            {isPluginTab
+              ? `Installing "${pkg.name}"`
+              : `Target Edition for "${pkg.name}"`}
           </span>
         </div>
 
@@ -1568,11 +2247,72 @@ function InstallModal({
           {status === "installing" && (
             <div className="py-8 flex flex-col items-center justify-center gap-3">
               <span className="text-2xl text-[#FFFF55] mc-text-shadow animate-pulse">
-                Installing...
+                {dependencies.length > 0
+                  ? "Installing dependencies..."
+                  : isPluginTab
+                    ? "Installing..."
+                    : "Installing..."}
               </span>
               <span className="text-xs text-[#A0A0A0] mc-text-shadow">
-                Downloading and extracting assets
+                {isPluginTab
+                  ? "Downloading plugin files"
+                  : dependencies.length > 0
+                    ? "Downloading and extracting required dependencies"
+                    : "Downloading and extracting assets"}
               </span>
+              <div className="w-full flex flex-col gap-1 px-2 mt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-[#FFFF55] mc-text-shadow truncate">
+                    {progressLabel ||
+                      (isPluginTab
+                        ? "Downloading plugin files"
+                        : "Downloading assets")}
+                  </span>
+                  <span className="text-[11px] text-[#FFFF55] mc-text-shadow shrink-0">
+                    {Math.floor(isPluginTab ? progress : overallProgress)}%
+                  </span>
+                </div>
+                <div className="h-3 border-2 border-[#3F3F3F] bg-black/60 p-0.5">
+                  <div
+                    className="h-full bg-[#FFFF55]"
+                    style={{
+                      width: `${isPluginTab ? progress : overallProgress}%`,
+                    }}
+                  />
+                </div>
+              </div>
+              {dependencies.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 justify-center mt-2">
+                  {dependencies.map((depId) => {
+                    const dep = allPackages.find((p) => p.id === depId);
+                    return (
+                      <span
+                        key={depId}
+                        className="text-[10px] bg-black/60 border border-[#FF8800]/40 px-2 py-0.5 text-[#FFAA33] mc-text-shadow animate-pulse"
+                      >
+                        {dep?.name || depId}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              {isPluginTab && pkg.permissions && pkg.permissions.length > 0 && (
+                <div className="flex flex-col gap-1.5 mt-2 w-full px-4">
+                  <span className="text-[10px] text-[#888] mc-text-shadow uppercase tracking-[0.2em] font-bold text-center">
+                    Requested Permissions
+                  </span>
+                  <div className="flex flex-wrap gap-1.5 justify-center">
+                    {pkg.permissions.map((perm) => (
+                      <span
+                        key={perm}
+                        className="text-[10px] bg-black/60 border border-[#FF8800]/40 px-2 py-0.5 text-[#FFAA33] mc-text-shadow"
+                      >
+                        {perm}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {status === "success" && (
@@ -1594,7 +2334,10 @@ function InstallModal({
                 {errorMsg}
               </span>
               <button
-                onClick={() => setStatus("idle")}
+                onClick={() => {
+                  setStatus("idle");
+                  if (isPluginTab) installPlugin();
+                }}
                 className="mt-2 w-32 h-9 flex items-center justify-center text-sm mc-text-shadow text-white cursor-pointer"
                 style={{
                   backgroundImage: "url('/images/Button_Background.png')",
@@ -1608,24 +2351,25 @@ function InstallModal({
           )}
 
           {status === "idle" &&
-            (availableEditions.length === 0 ? (
+            !isPluginTab &&
+            (editionOptions.length === 0 ? (
               <div className="py-6 flex items-center justify-center">
                 <span className="text-[#FF5555] mc-text-shadow">
                   No installed editions found
                 </span>
               </div>
             ) : (
-              availableEditions.map((ed, i) => (
+              editionOptions.map((opt, i) => (
                 <div
-                  key={ed.id}
-                  onClick={() => installTo(ed.id)}
+                  key={opt.instanceId}
+                  onClick={() => installTo(opt.instanceId)}
                   onMouseEnter={() => setFocusedIdx(i)}
                   className={`flex flex-col p-3 cursor-pointer border-2 transition-none ${focusedIdx === i ? "border-[#FFFF55] bg-black/40" : "border-[#444] bg-black/20"}`}
                 >
                   <span
                     className={`text-lg mc-text-shadow ${focusedIdx === i ? "text-[#FFFF55]" : "text-white"}`}
                   >
-                    {ed.name}
+                    {opt.label}
                   </span>
                 </div>
               ))
@@ -1642,12 +2386,14 @@ function UninstallModal({
   onClose,
   playPressSound,
   isVersionTab,
+  isPluginTab,
 }: {
   pkg: RegistryPackage;
   installedEntries: InstalledWorkshopPackage[];
   onClose: () => void;
   playPressSound: () => void;
   isVersionTab?: boolean;
+  isPluginTab?: boolean;
 }) {
   const { deleteCustomEdition } = useGame();
   const game = useContext(GameContext);
@@ -1660,6 +2406,33 @@ function UninstallModal({
     const ed = game?.editions.find((e) => e.id === instanceId);
     return ed?.name ?? instanceId;
   };
+
+  const uninstallPlugin = useCallback(async () => {
+    setStatus("removing");
+    setErrorMsg(null);
+    playPressSound();
+    try {
+      await TauriService.removePluginDir(pkg.id);
+      await PluginManager.instance.reload();
+      setStatus("success");
+    } catch (e: unknown) {
+      console.error(e);
+      setStatus("error");
+      setErrorMsg(
+        e instanceof Error
+          ? e.message
+          : typeof e === "string"
+            ? e
+            : "Unknown error",
+      );
+    }
+  }, [pkg.id, playPressSound]);
+
+  useEffect(() => {
+    if (isPluginTab && status === "idle") {
+      uninstallPlugin();
+    }
+  }, [isPluginTab, status, uninstallPlugin]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1705,7 +2478,13 @@ function UninstallModal({
     } catch (e: unknown) {
       console.error(e);
       setStatus("error");
-      setErrorMsg(e instanceof Error ? e.message : typeof e === "string" ? e : "Unknown error");
+      setErrorMsg(
+        e instanceof Error
+          ? e.message
+          : typeof e === "string"
+            ? e
+            : "Unknown error",
+      );
     }
   };
 
@@ -1732,10 +2511,12 @@ function UninstallModal({
       >
         <div className="p-6 border-b border-[#555] bg-black/60">
           <span className="text-2xl mc-text-shadow block font-bold tracking-wide text-[#FF5555]">
-            REMOVE CONTENT
+            {isPluginTab ? "REMOVE PLUGIN" : "REMOVE CONTENT"}
           </span>
           <span className="text-sm text-[#A0A0A0] mc-text-shadow uppercase tracking-widest opacity-80 mt-1">
-            Select edition to remove "{pkg.name}"
+            {isPluginTab
+              ? `Remove "${pkg.name}"`
+              : `Select edition to remove "${pkg.name}"`}
           </span>
         </div>
 
@@ -1769,7 +2550,10 @@ function UninstallModal({
                 {errorMsg}
               </span>
               <button
-                onClick={() => setStatus("idle")}
+                onClick={() => {
+                  setStatus("idle");
+                  if (isPluginTab) uninstallPlugin();
+                }}
                 className="mt-2 w-32 h-9 flex items-center justify-center text-sm mc-text-shadow text-white cursor-pointer"
                 style={{
                   backgroundImage: "url('/images/Button_Background.png')",
@@ -1783,6 +2567,7 @@ function UninstallModal({
           )}
 
           {status === "idle" &&
+            !isPluginTab &&
             installedEntries.map((entry, i) => (
               <div
                 key={entry.instanceId}

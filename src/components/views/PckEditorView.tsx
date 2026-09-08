@@ -128,7 +128,13 @@ export default function PckEditorView() {
     setExpandedFolders(next);
   };
 
-  type TreeNode = { name: string; path: string; isFolder: boolean; children: TreeNode[]; asset?: PCKAsset };
+  type TreeNode = {
+    name: string;
+    path: string;
+    isFolder: boolean;
+    children: TreeNode[];
+    asset?: PCKAsset;
+  };
 
   const renderTree = (nodes: TreeNode[], depth = 0) => {
     return nodes.map((node) => {
@@ -149,7 +155,7 @@ export default function PckEditorView() {
             className={`flex items-center gap-2 p-2 cursor-pointer transition-all border-l-2 ${
               isSelected
                 ? "bg-[#FFFF55]/10 border-[#FFFF55] text-[#FFFF55]"
-                : "border-transparent hover:bg-white/5 text-white"
+                : "border-transparent text-white"
             } ${node.isFolder ? "font-bold" : ""}`}
           >
             {node.isFolder ? (
@@ -448,7 +454,7 @@ export default function PckEditorView() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === "INPUT") return;
-      if (e.key === "Escape" || e.key === "Backspace") {
+      if (e.key === "Escape") {
         if (isEditingProperty) {
           setIsEditingProperty(null);
           return;
@@ -494,7 +500,7 @@ export default function PckEditorView() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: animationsEnabled ? 0.3 : 0 }}
-      className="flex flex-col items-center w-full max-w-6xl h-[85vh] outline-none"
+      className="flex flex-col items-center w-full max-w-6xl h-full outline-none"
     >
       <div className="w-full flex justify-between items-center mb-4 px-8">
         <h2 className="text-2xl text-white mc-text-shadow border-b-2 border-[#373737] pb-1 tracking-widest uppercase font-bold">
@@ -686,7 +692,7 @@ export default function PckEditorView() {
                       <div className="relative">
                         <button
                           onClick={() => setIsChangingType(!isChangingType)}
-                          className="flex items-center gap-1.5 px-2 py-0.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-sm transition-all group/type"
+                          className="flex items-center gap-1.5 px-2 py-0.5 bg-white/5 border border-white/10 rounded-sm group/type"
                         >
                           <span
                             className="text-[10px] uppercase tracking-widest mc-text-shadow font-bold"
@@ -699,7 +705,7 @@ export default function PckEditorView() {
                           </span>
                           <img
                             src="/images/Settings_Arrow_Down.png"
-                            className={`w-2 h-2 object-contain opacity-40 group-hover/type:opacity-60 transition-transform ${isChangingType ? "rotate-180" : ""}`}
+                            className="w-2 h-2 object-contain opacity-40"
                             style={{ imageRendering: "pixelated" }}
                           />
                         </button>
@@ -742,10 +748,10 @@ export default function PckEditorView() {
                                           handleTypeChange(typeVal);
                                           setIsChangingType(false);
                                         }}
-                                        className={`w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest transition-all border-l-2 ${
+                                        className={`w-full text-left px-3 py-2 text-[10px] uppercase tracking-widest border-l-2 ${
                                           isActive
                                             ? "bg-white/10 border-[#FFFF55] text-white"
-                                            : "border-transparent text-white/40 hover:text-white/80 hover:bg-white/5"
+                                            : "border-transparent text-white/40"
                                         }`}
                                       >
                                         <div className="flex items-center gap-2">
@@ -768,20 +774,14 @@ export default function PckEditorView() {
                       </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
-                      <button
-                        onClick={() => handleMoveAsset("up")}
-                        className="hover:scale-110 active:scale-95 transition-transform"
-                      >
+                      <button onClick={() => handleMoveAsset("up")}>
                         <img
                           src="/images/Settings_Arrow_Up.png"
                           className="w-4 h-4 object-contain"
                           style={{ imageRendering: "pixelated" }}
                         />
                       </button>
-                      <button
-                        onClick={() => handleMoveAsset("down")}
-                        className="hover:scale-110 active:scale-95 transition-transform"
-                      >
+                      <button onClick={() => handleMoveAsset("down")}>
                         <img
                           src="/images/Settings_Arrow_Down.png"
                           className="w-4 h-4 object-contain"
@@ -809,7 +809,7 @@ export default function PckEditorView() {
                           style={{ imageRendering: "pixelated" }}
                         />
                       )}
-                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 px-2 py-1 rounded text-[10px] text-white/60 pointer-events-none uppercase tracking-widest">
+                      <div className="absolute top-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-white/60 pointer-events-none uppercase tracking-widest">
                         {selectedAsset.type === PCKAssetType.SKIN
                           ? "3D Skin View"
                           : selectedAsset.type === PCKAssetType.CAPE
@@ -1005,7 +1005,7 @@ export default function PckEditorView() {
                       </button>
                       <button
                         onClick={() => handleDeleteAsset(selectedAsset.id)}
-                        className="w-full py-2 text-red-500/80 mc-text-shadow text-sm transition-all hover:text-red-500 hover:scale-[1.02]"
+                        className="w-full py-2 text-red-500/80 mc-text-shadow text-sm hover:text-red-500"
                         style={{
                           backgroundImage:
                             "url('/images/Button_Background.png')",
@@ -1028,7 +1028,7 @@ export default function PckEditorView() {
           playBackSound();
           setActiveView("devtools");
         }}
-        className="w-72 h-14 flex items-center justify-center transition-colors text-2xl mc-text-shadow mt-6 outline-none border-none hover:text-[#FFFF55] text-white"
+        className="w-72 h-14 shrink-0 flex items-center justify-center transition-colors text-2xl mc-text-shadow mt-6 outline-none border-none hover:text-[#FFFF55] text-white"
         style={{
           backgroundImage: "url('/images/Button_Background.png')",
           backgroundSize: "100% 100%",

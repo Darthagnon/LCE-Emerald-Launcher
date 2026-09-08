@@ -1,8 +1,40 @@
 @import "tailwindcss";
 
+@layer base {
+    *,
+    ::before,
+    ::after {
+        -webkit-font-smoothing: none;
+        -moz-osx-font-smoothing: auto;
+    }
+    button,
+    input,
+    select,
+    textarea {
+        font-weight: normal;
+    }
+    body {
+        font-synthesis: none;
+    }
+}
+
 @font-face {
     font-family: "Mojangles";
     src: url("/fonts/Mojangles.ttf") format("truetype");
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "Mojang7";
+    src: url("/fonts/Mojang Font_7.ttf") format("truetype");
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: "Mojang11";
+    src: url("/fonts/Mojang Font_11.ttf") format("truetype");
     font-weight: normal;
     font-style: normal;
 }
@@ -22,15 +54,6 @@
     border-image: url("/images/Button_Background.png") 4 stretch;
     image-rendering: pixelated;
     background: rgba(0, 0, 0, 0.6);
-    transition: all 0.2s ease;
-}
-
-.mc-setup-nav-btn:hover:not(:disabled) {
-    transform: scale(1.05);
-}
-
-.mc-setup-nav-btn:active:not(:disabled) {
-    transform: scale(0.95);
 }
 
 .mc-setup-nav-btn:disabled {
@@ -131,7 +154,6 @@ body {
     margin: 0;
     background-color: #000;
     font-family: "Mojangles", monospace;
-    -webkit-font-smoothing: none;
 }
 
 .mc-button {
@@ -166,13 +188,28 @@ body {
     }
 }
 
+@keyframes blink-caret {
+    0%,
+    50% {
+        opacity: 1;
+    }
+    51%,
+    100% {
+        opacity: 0;
+    }
+}
+
+.blink-caret {
+    animation: blink-caret 1s step-end infinite;
+}
+
 .particle-burst {
     animation: sga-burst 0.8s ease-out forwards;
     filter: drop-shadow(0 0 8px rgba(180, 100, 255, 0.9));
 }
 
 ::-webkit-scrollbar {
-    width: 14px;
+    width: 16px;
 }
 
 ::-webkit-scrollbar-track {
@@ -182,18 +219,25 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: url("/images/Slider_Handle.png") no-repeat center;
-    background-size: 100% 100%;
+    background-image:
+        url("/images/Slider_Handle_top.png"),
+        url("/images/Slider_Handle_mid.png"),
+        url("/images/Slider_Handle_bottom.png");
+    background-repeat: no-repeat, no-repeat, no-repeat;
+    background-position:
+        50% 4px,
+        50% 8px,
+        50% 100%;
+    background-size:
+        16px 4px,
+        16px calc(100% - 14px),
+        16px 6px;
     image-rendering: pixelated;
     min-height: 44px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-    filter: brightness(1.2);
-}
-
 .custom-scrollbar::-webkit-scrollbar {
-    width: 14px;
+    width: 16px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -203,14 +247,48 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: url("/images/Slider_Handle.png") no-repeat center;
-    background-size: 100% 100%;
+    background-image:
+        url("/images/Slider_Handle_top.png"),
+        url("/images/Slider_Handle_mid.png"),
+        url("/images/Slider_Handle_bottom.png");
+    background-repeat: no-repeat, no-repeat, no-repeat;
+    background-position:
+        50% 4px,
+        50% 8px,
+        50% 100%;
+    background-size:
+        16px 4px,
+        16px calc(100% - 14px),
+        16px 6px;
     image-rendering: pixelated;
     min-height: 44px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    filter: brightness(1.2);
+.settings-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.settings-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.settings-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+    min-height: 44px;
+}
+
+.settings-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.hidden-scrollbar {
+    scrollbar-width: none;
+}
+
+.hidden-scrollbar::-webkit-scrollbar {
+    display: none;
 }
 
 .no-animations * {

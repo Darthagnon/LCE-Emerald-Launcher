@@ -1,5 +1,4 @@
 name: "publish"
-
 on:
   workflow_dispatch:
 
@@ -8,12 +7,18 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      body: ${{ steps.version.outputs.body }}
     steps:
       - uses: actions/checkout@v4
       - id: version
-        run: echo "version=$(jq -r .version package.json)" >> $GITHUB_OUTPUT
+        run: |
+          echo "version=$(jq -r .version package.json)" >> $GITHUB_OUTPUT
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          cat RELEASE_NOTES.md >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
   publish-tauri:
+    needs: get-version
     permissions:
       contents: write
     strategy:
@@ -22,16 +27,12 @@ jobs:
         include:
           - platform: "macos-latest"
             args: "--target aarch64-apple-darwin"
-            artifact-name: "macos-aarch64"
           - platform: "macos-latest"
             args: "--target x86_64-apple-darwin"
-            artifact-name: "macos-x86_64"
           - platform: "ubuntu-22.04"
             args: ""
-            artifact-name: "linux-x86_64"
           - platform: "windows-latest"
             args: ""
-            artifact-name: "windows-x86_64"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -65,43 +66,160 @@ jobs:
 
       - name: install frontend dependencies
         run: pnpm install
-
-      - name: build Tauri app
-        run: pnpm run tauri:build -- ${{ matrix.args }}
+      - uses: tauri-apps/tauri-action@v0
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "Emerald v__VERSION__"
+          releaseBody: ${{ needs.get-version.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          args: ${{ matrix.args }}
 
-      - name: Create PKG with post-install script (macOS only)
-        if: matrix.platform == 'macos-latest'
+  build-appimage:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Bootstrap keyring and git
         run: |
-          mkdir -p pkg_temp/scripts
-          cp scripts/postinstall.sh pkg_temp/scripts/
-          MACOS_BUNDLE_DIR=$(find src-tauri/target -path "*/release/bundle/macos" -type d | head -n 1)
-          APP_PATH=$(find "$MACOS_BUNDLE_DIR" -name "*.app" -type d | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            echo "No .app found in $MACOS_BUNDLE_DIR"
-            exit 1
-          fi
-          APP_NAME=$(basename "$APP_PATH")
-          pkgbuild --root "$APP_PATH/.." \
-                   --install-location /Applications \
-                   --scripts pkg_temp/scripts \
-                   --identifier "com.emerald.legacy" \
-                   --version "1.2.1" \
-                   "Emerald-Legacy-Launcher.pkg"
-          mv "Emerald-Legacy-Launcher.pkg" "$MACOS_BUNDLE_DIR/"
+          pacman -Syu --noconfirm archlinux-keyring
+          pacman -S --noconfirm --needed git
 
-      - name: upload build artifacts
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/target
+            node_modules
+            /var/cache/pacman/pkg
+          key: arch-${{ hashFiles('src-tauri/Cargo.lock', 'pnpm-lock.yaml') }}
+          restore-keys: arch-
+
+      - name: Install build dependencies
+        run: |
+          pacman -S --noconfirm --needed \
+            base-devel wget zsync nodejs patchelf \
+            cargo cargo-tauri \
+            gtk3 libayatana-appindicator webkit2gtk-4.1 glib-networking librsvg \
+            xorg-server-xvfb
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Build deb with tauri
+        run: |
+          pnpm install
+          cargo-tauri build --bundles deb --config '{"bundle":{"createUpdaterArtifacts":false},"build":{"beforeBuildCommand":"pnpm build"}}'
+
+      - name: Extract deb into /usr
+        run: |
+          cd src-tauri/target/release/bundle/deb
+          ar x ./*.deb
+          tar -xf data.tar.*
+          cp -a usr/. /usr/
+
+      - name: Build AppImage
+        run: |
+          cd pkg/AppImage
+          chmod +x ./AppImage.sh
+          ./AppImage.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: pkg/AppImage/dist/*.AppImage* #neo: *.AppImage* because .zsync as well
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: "pnpm"
+
+      - name: setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: install Android SDK components
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          yes | sdkmanager --licenses
+          sudo apt-get install -y glslang-tools
+
+      - name: install Rust stable with android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: install frontend dependencies
+        run: pnpm install
+
+      - name: download android bundled assets
+        run: pnpm android:assets
+
+      - name: restore gradle wrapper jar
+        run: |
+          VER=$(sed -n 's/.*gradle-\([0-9][0-9.]*\)-bin\.zip.*/\1/p' src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties)
+          curl -fL -o src-tauri/gen/android/gradle/wrapper/gradle-wrapper.jar \
+            "https://raw.githubusercontent.com/gradle/gradle/v${VER}/gradle/wrapper/gradle-wrapper.jar"
+
+      - name: set up android signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/app/release.keystore
+          cat > src-tauri/gen/android/app/key.properties <<EOF
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEYSTORE_PASSWORD
+          storeFile=release.keystore
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          EOF
+
+      - name: build Android APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: npx tauri android build --target aarch64
+
+      - name: upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact-name }}
-          path: |
-            src-tauri/target/release/bundle/**/*
-            src-tauri/target/*/release/bundle/**/*
+          name: android-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
 
   publish-flatpak:
-    needs: get-version
+    needs: [get-version, build-appimage, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -112,56 +230,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - name: sleep for 10 seconds
-        run: sleep 10
+      - name: sleep for 20 seconds
+        run: sleep 20
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: Emerald.Legacy.Launcher.flatpak
+          bundle: emerald.flatpak
           manifest-path: flatpak/io.github.Emerald_Legacy_Launcher.Emerald_Legacy_Launcher.yml
           cache-key: flatpak-builder-${{ github.sha }}
-      - name: upload flatpak artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: flatpak
-          path: Emerald.Legacy.Launcher.flatpak
-
-  publish-release:
-    needs: [get-version, publish-tauri, publish-flatpak]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: "*"
-          merge-multiple: true
-          path: artifacts
-
+          name: appimage
+          path: appimage
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: android
       - uses: softprops/action-gh-release@v2
         with:
+          body: ${{ needs.get-version.outputs.body }}
           tag_name: v${{ needs.get-version.outputs.version }}
-          name: "Emerald v${{ needs.get-version.outputs.version }}"
-          body: |
-            # What to download?
-            - `Emerald.Legacy.Launcher-*.rpm` for GNU/Linux (RHEL)
-            - `Emerald.Legacy.Launcher-*.deb` for GNU/Linux (Debian+Ubuntu)
-            - `Emerald.Legacy.Launcher-*.AppImage` for GNU/Linux (Universal, Currently Broken)
-            - `Emerald.Legacy.Launcher-*_x64.dmg` for macOS (Intel)
-            - `Emerald.Legacy.Launcher-*_aarch64.dmg` for macOS (M-series)
-            - `Emerald.Legacy.Launcher-*.exe` for Windows (Setup)
-            - `Emerald.Legacy.Launcher-*.msi` for Windows (Setup)
-            - `Emerald.Legacy.Launcher.flatpak` for GNU/Linux (Flatpak, Recommended)
-            ---
-            # Windows SmartScreen
-            This software is completely safe. Because the launcher is unsigned, you will see a "Windows protected your PC" window. To proceed:
-
-            1. Click the **"More info"** link under the main text.
-            2. Click the **"Run anyway"** button that appears.
-            ---
-            # macOS "Damaged" Error Fix
-            The macOS builds now include automatic fixes for Gatekeeper quarantine issues. The app should launch without "application is damaged" errors.
-          files: artifacts/*
+          files: |
+            emerald.flatpak
+            appimage/*.AppImage*
+            android/*.apk
           draft: true
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,5 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAudio } from "../../context/LauncherContext";
 
 interface AchievementToastProps {
   message: string | null;
@@ -16,14 +17,32 @@ export function AchievementToast({
   title = "Error!",
   variant = "error",
 }: AchievementToastProps) {
+  const { playSfx } = useAudio();
+  const prevMessage = useRef(message);
   useEffect(() => {
+    const wasNull = !prevMessage.current;
+    const isNull = !message;
+    prevMessage.current = message;
+    if (message && wasNull) {
+      if (variant === "update") {
+        playSfx("notification.ogg");
+      } else {
+        playSfx("in.ogg");
+      }
+    }
+
     if (message) {
       const timer = setTimeout(() => {
         onClose();
       }, 8000);
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        if (isNull) {
+          playSfx("out.ogg");
+        }
+      };
     }
-  }, [message, onClose]);
+  }, [message, onClose, variant, playSfx]);
 
   const getIcon = () => {
     if (variant === "update") {
@@ -45,7 +64,15 @@ export function AchievementToast({
     }
     if (variant === "steam") {
       return (
-        <img src="/images/steam.png" alt="Steam" className="w-8 h-8 object-contain" style={{ imageRendering: "pixelated", filter: "brightness(0) invert(1)" }} />
+        <img
+          src="/images/steam.png"
+          alt="Steam"
+          className="w-8 h-8 object-contain"
+          style={{
+            imageRendering: "pixelated",
+            filter: "brightness(0) invert(1)",
+          }}
+        />
       );
     }
     return (
@@ -77,9 +104,9 @@ export function AchievementToast({
           onClick={
             onClick
               ? () => {
-                onClick();
-                onClose();
-              }
+                  onClick();
+                  onClose();
+                }
               : undefined
           }
           className={`fixed top-6 right-6 z-[9999] ${onClick ? "cursor-pointer" : ""}`}
@@ -87,12 +114,9 @@ export function AchievementToast({
           <div
             className="flex items-center gap-4 p-4 min-w-[300px] max-w-[450px]"
             style={{
-              backgroundColor: "#212121",
-              border: "4px solid",
-              borderTopColor: "#7F7F7F",
-              borderLeftColor: "#7F7F7F",
-              borderBottomColor: "#3F3F3F",
-              borderRightColor: "#3F3F3F",
+              backgroundImage: "url('/images/notification.png')",
+              backgroundSize: "100% 100%",
+              backgroundRepeat: "no-repeat",
               imageRendering: "pixelated",
             }}
           >

@@ -114,7 +114,7 @@ export default function GrfEditorView() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: animationsEnabled ? 0.3 : 0 }}
-      className="flex flex-col w-full h-[85vh] max-w-7xl relative"
+      className="flex flex-col w-full h-full max-w-7xl relative"
     >
       <input type="file" ref={fileInputRef} onChange={handleFileLoad} className="hidden" accept=".grf" />
       <input type="file" ref={addFileInputRef} onChange={handleAddFile} className="hidden" />
@@ -159,13 +159,13 @@ export default function GrfEditorView() {
           <div className="flex gap-1 p-2 pt-4 border-b-2 border-[#373737]">
             <button
               onClick={() => { playPressSound(); setActiveTab("rules"); }}
-              className={`flex items-center gap-3 px-6 py-2 transition-all mc-text-shadow ${activeTab === "rules" ? "text-[#FFFF55] opacity-100 scale-105" : "text-white opacity-40 hover:opacity-100"}`}
+              className={`flex items-center gap-3 px-6 py-2 mc-text-shadow ${activeTab === "rules" ? "text-[#FFFF55] opacity-100" : "text-white opacity-40"}`}
             >
               <span className="text-lg">Game Rules</span>
             </button>
             <button
               onClick={() => { playPressSound(); setActiveTab("files"); }}
-              className={`flex items-center gap-3 px-6 py-2 transition-all mc-text-shadow ${activeTab === "files" ? "text-[#FFFF55] opacity-100 scale-105" : "text-white opacity-40 hover:opacity-100"}`}
+              className={`flex items-center gap-3 px-6 py-2 mc-text-shadow ${activeTab === "files" ? "text-[#FFFF55] opacity-100" : "text-white opacity-40"}`}
             >
               <span className="text-lg">Files ({grf.files.length})</span>
             </button>
@@ -202,7 +202,7 @@ export default function GrfEditorView() {
                       <tr><td colSpan={3} className="p-4 text-center text-white/40">No files in GRF</td></tr>
                     )}
                     {grf.files.map((f, i) => (
-                      <tr key={i} className="border-b border-[#373737]/30 hover:bg-white/5 transition-colors">
+                      <tr key={i} className="border-b border-[#373737]/30">
                         <td className="p-3 text-white font-medium">{f.filename}</td>
                         <td className="p-3 text-white/60 text-right text-xs">{(f.data.length / 1024).toFixed(2)} KB</td>
                         <td className="p-3 text-center">
@@ -223,10 +223,10 @@ export default function GrfEditorView() {
         </div>
       )}
 
-      <div className="flex justify-center mt-6 h-14">
+      <div className="flex justify-center mt-6 h-14 shrink-0">
         <button
           onClick={() => { playBackSound(); setActiveView("devtools"); }}
-          className="w-72 h-full flex items-center justify-center transition-colors text-2xl mc-text-shadow outline-none border-none hover:text-[#FFFF55] text-white"
+          className="w-72 h-full shrink-0 flex items-center justify-center transition-colors text-2xl mc-text-shadow outline-none border-none hover:text-[#FFFF55] text-white"
           style={{ backgroundImage: "url('/images/Button_Background.png')", backgroundSize: "100% 100%", imageRendering: "pixelated" }}
         >
           Back
@@ -259,7 +259,7 @@ function GrfNodeView({ node, level, path, onUpdate }: { node: GrfNode, level: nu
   return (
     <div className="flex flex-col mb-1 select-none">
       <div
-        className="flex items-center gap-2 p-2 hover:bg-white/10 cursor-pointer transition-colors"
+        className="flex items-center gap-2 p-2 cursor-pointer"
         style={{ paddingLeft: `${level * 24 + 8}px` }}
         onClick={() => setExpanded(!expanded)}
       >

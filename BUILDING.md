@@ -33,3 +33,16 @@ codesign --force --deep --sign - "/path/to/Emerald\ Legacy\ Launcher.app"
 ```sh
 pnpm flatpak  # or npm
 ```
+
+## Gentoo
+
+A Portage overlay lives in [`gentoo/`](gentoo/). See the GNU/Linux installation section in [README.md](README.md).
+
+## Android
+
+Building Emerald on Android is pretty easy,
+
+```sh
+pnpm android:assets  #neo: fetches the rootfs and proton11
+pnpm tauri android build -t aarch64
+```

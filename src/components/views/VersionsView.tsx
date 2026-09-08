@@ -5,6 +5,10 @@ import CustomTUModal from "../modals/CustomTUModal";
 import SetUidModal from "../modals/SetUidModal";
 import ImportWorldModal from "../modals/ImportWorldModal";
 import PlaytimeModal from "../modals/PlaytimeModal";
+import CustomizeModal from "../modals/CustomizeModal";
+import DownloadDlcModal from "../modals/DownloadDlcModal";
+import OptionsModal from "../modals/OptionsModal";
+import { parseSchema } from "../../utils/argsSchema";
 import {
   useUI,
   useConfig,
@@ -12,7 +16,9 @@ import {
   useGame,
 } from "../../context/LauncherContext";
 import { ScreenshotImage } from "../common/ScreenshotImage";
+import { usePlatform } from "../../hooks/usePlatform";
 import type { Edition } from "../../types/edition";
+import { HIDDEN_INSTANCE_URL } from "../../types/edition";
 interface DeleteConfirmButtonProps {
   label: string;
   onClick: () => void;
@@ -61,6 +67,8 @@ const VersionsView = memo(function VersionsView() {
     profile: selectedProfile,
     setProfile: setSelectedProfile,
     animationsEnabled,
+    instanceLaunchArgs,
+    setInstanceLaunchArgs,
   } = useConfig();
   const { playPressSound, playBackSound } = useAudio();
   const {
@@ -72,13 +80,22 @@ const VersionsView = memo(function VersionsView() {
     deleteCustomEdition: onDeleteEdition,
     addCustomEdition: onAddEdition,
     updateCustomEdition: onUpdateEdition,
-    downloadingId,
+    downloadingIds,
     downloadProgress,
     updatesAvailable,
     addToSteam,
     cycleBranch,
+    customizations,
+    updateCustomization,
+    saveCustomPath,
   } = useGame();
   const { isDayTime } = useConfig();
+  const { isAndroid } = usePlatform();
+  const visibleEditions = editions.filter(
+    (e) =>
+      e.url !== HIDDEN_INSTANCE_URL ||
+      installedVersions.includes(e.instanceId),
+  );
   const [focusIndex, setFocusIndex] = useState<number>(0);
   const [focusBtn, setFocusBtn] = useState<number>(0);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -86,23 +103,56 @@ const VersionsView = memo(function VersionsView() {
   const [setUidTargetId, setSetUidTargetId] = useState("");
   const [editingEdition, setEditingEdition] = useState<Edition | null>(null);
   const [isImportWorldModalOpen, setIsImportWorldModalOpen] = useState(false);
-  const [importWorldTarget, setImportWorldTarget] = useState<{ id: string; name: string } | null>(null);
+  const [importWorldTarget, setImportWorldTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [isPlaytimeModalOpen, setIsPlaytimeModalOpen] = useState(false);
-  const [playtimeTarget, setPlaytimeTarget] = useState<{ id: string; name: string } | null>(null);
-  const [playtimeMap, setPlaytimeMap] = useState<Record<string, PlaytimeResponse>>({});
+  const [playtimeTarget, setPlaytimeTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [isCustomizeModalOpen, setIsCustomizeModalOpen] = useState(false);
+  const [customizeTarget, setCustomizeTarget] = useState<Edition | null>(null);
+  const [playtimeMap, setPlaytimeMap] = useState<
+    Record<string, PlaytimeResponse>
+  >({});
   const [initialPath, setInitialPath] = useState<string>("");
   const [hoveredBtn, setHoveredBtn] = useState<{
     row: number;
     btn: string;
   } | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [deleteConfirmEdition, setDeleteConfirmEdition] = useState<Edition | null>(null);
+  const [deleteConfirmEdition, setDeleteConfirmEdition] =
+    useState<Edition | null>(null);
+  const [isDlcModalOpen, setIsDlcModalOpen] = useState(false);
+  const [dlcTargetEdition, setDlcTargetEdition] = useState<Edition | null>(
+    null,
+  );
+  const [isOptionsModalOpen, setIsOptionsModalOpen] = useState(false);
+  const [optionsTarget, setOptionsTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [argsSchemas, setArgsSchemas] = useState<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const ITEM_COUNT = editions.length + 3;
+  const ITEM_COUNT = visibleEditions.length + 3;
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement?.tagName === "INPUT") return;
+      if (
+        isImportModalOpen ||
+        isSetUidModalOpen ||
+        isImportWorldModalOpen ||
+        isPlaytimeModalOpen ||
+        isCustomizeModalOpen ||
+        isDlcModalOpen ||
+        isOptionsModalOpen ||
+        deleteConfirmEdition
+      ) {
+        return;
+      }
 
       if (e.key === "Escape" || e.key === "Backspace") {
         playBackSound();
@@ -120,8 +170,8 @@ const VersionsView = memo(function VersionsView() {
         setFocusBtn(0);
       } else if (e.key === "ArrowLeft") {
         e.preventDefault();
-        if (focusIndex < editions.length) {
-          const edition = editions[focusIndex];
+        if (focusIndex < visibleEditions.length) {
+          const edition = visibleEditions[focusIndex];
           const isInstalled = installedVersions.includes(edition.id);
           const isCustom = edition.id.startsWith("custom_");
           const maxBtn = isInstalled ? (isCustom ? 6 : 4) : 1;
@@ -129,8 +179,8 @@ const VersionsView = memo(function VersionsView() {
         }
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
-        if (focusIndex < editions.length) {
-          const edition = editions[focusIndex];
+        if (focusIndex < visibleEditions.length) {
+          const edition = visibleEditions[focusIndex];
           const isInstalled = installedVersions.includes(edition.id);
           const isCustom = edition.id.startsWith("custom_");
           const maxBtn = isInstalled ? (isCustom ? 6 : 4) : 1;
@@ -138,30 +188,33 @@ const VersionsView = memo(function VersionsView() {
         }
       } else if (e.key === "Enter") {
         e.preventDefault();
-        if (focusIndex < editions.length) {
-          const edition = editions[focusIndex];
+        if (focusIndex < visibleEditions.length) {
+          const edition = visibleEditions[focusIndex];
           const isInstalled = installedVersions.includes(edition.instanceId);
-          const isDownloading = downloadingId === edition.instanceId;
+          const isDownloading = downloadingIds.includes(edition.instanceId);
           if (focusBtn === 0) {
             if (isInstalled) {
               playPressSound();
               setOpenMenuId(openMenuId === edition.id ? null : edition.id);
             } else {
-              if (!isDownloading && !downloadingId) {
+              if (!isDownloading) {
                 playPressSound();
                 toggleInstall(edition.instanceId);
-              } else if (isDownloading) {
-                handleCancelDownload();
+              } else {
+                handleCancelDownload(edition.instanceId);
               }
             }
+          } else if (focusBtn === 1 && !isInstalled) {
+            playPressSound();
+            setOpenMenuId(openMenuId === edition.id ? null : edition.id);
           } else if (focusBtn === 2) {
             playPressSound();
             cycleBranch(edition.id);
           }
-        } else if (focusIndex === editions.length) {
+        } else if (focusIndex === visibleEditions.length) {
           playPressSound();
           setIsImportModalOpen(true);
-        } else if (focusIndex === editions.length + 1) {
+        } else if (focusIndex === visibleEditions.length + 1) {
           playPressSound();
           handleImportFolder();
         } else {
@@ -178,7 +231,7 @@ const VersionsView = memo(function VersionsView() {
     focusBtn,
     editions,
     installedVersions,
-    downloadingId,
+    downloadingIds,
     ITEM_COUNT,
     playPressSound,
     playBackSound,
@@ -188,10 +241,18 @@ const VersionsView = memo(function VersionsView() {
     handleCancelDownload,
     addToSteam,
     isDayTime,
+    isImportModalOpen,
+    isSetUidModalOpen,
+    isImportWorldModalOpen,
+    isPlaytimeModalOpen,
+    isCustomizeModalOpen,
+    isDlcModalOpen,
+    isOptionsModalOpen,
+    deleteConfirmEdition,
   ]);
 
   useEffect(() => {
-    if (focusIndex < editions.length && listRef.current) {
+    if (focusIndex < visibleEditions.length && listRef.current) {
       const el = listRef.current.querySelector(
         `[data-index="${focusIndex}"]`,
       ) as HTMLElement;
@@ -204,16 +265,41 @@ const VersionsView = memo(function VersionsView() {
   useEffect(() => {
     const fetchPlaytimes = async () => {
       const map: Record<string, PlaytimeResponse> = {};
-      await Promise.all(installedVersions.map(async (id) => {
-        try {
-          map[id] = await TauriService.getPlaytime(id);
-        } catch (e) {
-          console.error(e);
-        }
-      }));
+      await Promise.all(
+        installedVersions.map(async (id) => {
+          try {
+            map[id] = await TauriService.getPlaytime(id);
+          } catch (e) {
+            console.error(e);
+          }
+        }),
+      );
       setPlaytimeMap(map);
     };
     fetchPlaytimes();
+  }, [installedVersions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const checkSchemas = async () => {
+      const map: Record<string, boolean> = {};
+      await Promise.all(
+        installedVersions.map(async (id) => {
+          try {
+            const schema = await TauriService.getInstanceArgsSchema(id);
+            map[id] = !!schema && parseSchema(schema) !== null;
+          } catch (e) {
+            console.error(e);
+            map[id] = false;
+          }
+        }),
+      );
+      if (!cancelled) setArgsSchemas(map);
+    };
+    checkSchemas();
+    return () => {
+      cancelled = true;
+    };
   }, [installedVersions]);
 
   const handleEditionClick = (edition: Edition, index: number) => {
@@ -238,7 +324,7 @@ const VersionsView = memo(function VersionsView() {
   };
 
   const handleImportWorld = (instanceId: string) => {
-    const edition = editions.find((e: Edition) => e.instanceId === instanceId);
+    const edition = visibleEditions.find((e: Edition) => e.instanceId === instanceId);
     setImportWorldTarget({ id: instanceId, name: edition?.name ?? instanceId });
     setIsImportWorldModalOpen(true);
   };
@@ -256,21 +342,13 @@ const VersionsView = memo(function VersionsView() {
         Versions
       </h2>
 
-      <div
-        className="w-full min-w-[480px] p-6 mb-4"
-        style={{
-          backgroundImage: "url('/images/background.png')",
-          backgroundSize: "100% 100%",
-          backgroundRepeat: "no-repeat",
-          imageRendering: "pixelated",
-        }}
-      >
+      <div className="w-full min-w-[480px] p-6 mb-4 mc-options-bg">
         <div
           ref={listRef}
           className="w-full max-h-[45vh] overflow-y-auto py-2 custom-scrollbar"
         >
           <div className="flex flex-col gap-1">
-            {editions.map((edition: Edition, i: number) => {
+            {visibleEditions.map((edition: Edition, i: number) => {
               const isInstalled = installedVersions.includes(
                 edition.instanceId,
               );
@@ -279,7 +357,7 @@ const VersionsView = memo(function VersionsView() {
                 hasAnyInstall && selectedProfile === edition.instanceId;
               const isFocused = focusIndex === i;
               const isCustom = edition.id.startsWith("custom_");
-              const isDownloading = downloadingId === edition.instanceId;
+              const isDownloading = downloadingIds.includes(edition.instanceId);
               const isComingSoon = edition.comingSoon;
 
               return (
@@ -294,31 +372,29 @@ const VersionsView = memo(function VersionsView() {
                   onMouseEnter={() => !isComingSoon && setFocusIndex(i)}
                 >
                   <div className="w-6 flex items-center justify-center flex-shrink-0">
-                    {isComingSoon ? (
-                      <img
-                        src="/images/wool_8.png"
-                        alt="Coming Soon"
-                        className="w-4 h-4 object-contain"
-                        style={{ imageRendering: "pixelated" }}
-                      />
-                    ) : isDownloading ? (
+                    {isDownloading ? (
                       <span className="text-xs text-gray-400 font-bold">
-                        {Math.floor(downloadProgress || 0)}%
+                        {Math.floor(downloadProgress[edition.instanceId] || 0)}%
                       </span>
-                    ) : isInstalled ? (
-                      <img
-                        src="/images/wool_5.png"
-                        alt="Installed"
-                        className="w-4 h-4 object-contain"
-                        style={{ imageRendering: "pixelated" }}
-                      />
+                    ) : edition.logo ? (
+                      edition.logo.startsWith("http") ||
+                      edition.logo.startsWith("/images") ? (
+                        <img
+                          src={edition.logo}
+                          alt=""
+                          className={`w-6 h-6 object-contain ${isComingSoon ? "opacity-40 grayscale" : ""}`}
+                          style={{ imageRendering: "pixelated" }}
+                        />
+                      ) : (
+                        <ScreenshotImage
+                          path={edition.logo}
+                          alt=""
+                          className={`w-6 h-6 object-contain ${isComingSoon ? "opacity-40 grayscale" : ""}`}
+                          style={{ imageRendering: "pixelated" }}
+                        />
+                      )
                     ) : (
-                      <img
-                        src="/images/wool_14.png"
-                        alt="Not installed"
-                        className="w-4 h-4 object-contain"
-                        style={{ imageRendering: "pixelated" }}
-                      />
+                      <div className="w-6 h-6 bg-gray-600/30 rounded-sm" />
                     )}
                   </div>
 
@@ -333,23 +409,6 @@ const VersionsView = memo(function VersionsView() {
                     } ${isComingSoon ? "cursor-not-allowed" : ""}`}
                   >
                     <div className="flex items-center gap-2">
-                      {edition.logo &&
-                        (edition.logo.startsWith("http") ||
-                        edition.logo.startsWith("/images") ? (
-                          <img
-                            src={edition.logo}
-                            alt=""
-                            className="w-5 h-5 object-contain flex-shrink-0"
-                            style={{ imageRendering: "pixelated" }}
-                          />
-                        ) : (
-                          <ScreenshotImage
-                            path={edition.logo}
-                            alt=""
-                            className="w-5 h-5 object-contain flex-shrink-0"
-                            style={{ imageRendering: "pixelated" }}
-                          />
-                        ))}
                       <span
                         className={`text-xl tracking-wide truncate ${
                           isSelected ? "text-white" : "text-black"
@@ -363,7 +422,10 @@ const VersionsView = memo(function VersionsView() {
                           onClick={(e) => {
                             e.stopPropagation();
                             playPressSound();
-                            setPlaytimeTarget({ id: edition.instanceId, name: edition.name });
+                            setPlaytimeTarget({
+                              id: edition.instanceId,
+                              name: edition.name,
+                            });
                             setIsPlaytimeModalOpen(true);
                           }}
                           className="flex items-center gap-1.5 px-2 py-1 bg-black/60 border border-[#555] hover:border-[#FFFF55] group transition-colors flex-shrink-0"
@@ -384,7 +446,11 @@ const VersionsView = memo(function VersionsView() {
                             <polyline points="12 6 12 12 16 14" />
                           </svg>
                           <span className="text-xs text-[#AAAAAA] group-hover:text-[#FFFF55] leading-none transition-colors">
-                            {playtimeMap[edition.instanceId] ? formatPlaytime(playtimeMap[edition.instanceId].totalSeconds) : ""}
+                            {playtimeMap[edition.instanceId]
+                              ? formatPlaytime(
+                                  playtimeMap[edition.instanceId].totalSeconds,
+                                )
+                              : ""}
                           </span>
                         </button>
                       )}
@@ -413,14 +479,14 @@ const VersionsView = memo(function VersionsView() {
                   </div>
 
                   <div className="flex items-center gap-2 flex-shrink-0 relative">
-                    {!isInstalled ? (
+                    {!isInstalled && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (!isDownloading && !downloadingId) {
+                          if (!isDownloading) {
                             toggleInstall(edition.instanceId);
-                          } else if (isDownloading) {
-                            handleCancelDownload();
+                          } else {
+                            handleCancelDownload(edition.instanceId);
                           }
                         }}
                         onMouseEnter={() =>
@@ -428,9 +494,7 @@ const VersionsView = memo(function VersionsView() {
                         }
                         onMouseLeave={() => setHoveredBtn(null)}
                         className={`w-9 h-9 flex items-center justify-center ${
-                          isDownloading || (!!downloadingId && !isInstalled)
-                            ? "opacity-50"
-                            : ""
+                          isDownloading ? "opacity-50" : ""
                         }`}
                         style={{
                           backgroundImage:
@@ -459,46 +523,45 @@ const VersionsView = memo(function VersionsView() {
                           }}
                         />
                       </button>
-                    ) : (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          playPressSound();
-                          setOpenMenuId(
-                            openMenuId === edition.id ? null : edition.id,
-                          );
-                        }}
-                        onMouseEnter={() =>
-                          setHoveredBtn({ row: i, btn: "menu" })
-                        }
-                        onMouseLeave={() => setHoveredBtn(null)}
-                        className="w-9 h-9 flex flex-col items-center justify-center gap-1 transition-colors relative"
-                        style={{
-                          backgroundImage:
-                            (hoveredBtn?.row === i &&
-                              hoveredBtn?.btn === "menu") ||
-                            (focusIndex === i &&
-                              (focusBtn === 0 || focusBtn === 1))
-                              ? "url('/images/Button_Square_Highlighted.png')"
-                              : "url('/images/Button_Square.png')",
-                          backgroundSize: "100% 100%",
-                          imageRendering: "pixelated",
-                          filter: updatesAvailable?.[edition.instanceId]
-                            ? "drop-shadow(0 0 4px rgba(255,255,0,0.8))"
-                            : "none",
-                        }}
-                      >
-                        <div
-                          className={`w-1.5 h-1.5 ${updatesAvailable?.[edition.instanceId] ? "bg-[#ffff55]" : "bg-white"}`}
-                        />
-                        <div
-                          className={`w-1.5 h-1.5 ${updatesAvailable?.[edition.instanceId] ? "bg-[#ffff55]" : "bg-white"}`}
-                        />
-                        <div
-                          className={`w-1.5 h-1.5 ${updatesAvailable?.[edition.instanceId] ? "bg-[#ffff55]" : "bg-white"}`}
-                        />
-                      </button>
                     )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        playPressSound();
+                        setOpenMenuId(
+                          openMenuId === edition.id ? null : edition.id,
+                        );
+                      }}
+                      onMouseEnter={() =>
+                        setHoveredBtn({ row: i, btn: "menu" })
+                      }
+                      onMouseLeave={() => setHoveredBtn(null)}
+                      className="w-9 h-9 flex flex-col items-center justify-center gap-1 transition-colors relative"
+                      style={{
+                        backgroundImage:
+                          (hoveredBtn?.row === i &&
+                            hoveredBtn?.btn === "menu") ||
+                          (focusIndex === i &&
+                            (focusBtn === 0 || focusBtn === 1))
+                            ? "url('/images/Button_Square_Highlighted.png')"
+                            : "url('/images/Button_Square.png')",
+                        backgroundSize: "100% 100%",
+                        imageRendering: "pixelated",
+                        filter: updatesAvailable?.[edition.instanceId]
+                          ? "drop-shadow(0 0 4px rgba(255,255,0,0.8))"
+                          : "none",
+                      }}
+                    >
+                      <div
+                        className={`w-1.5 h-1.5 ${updatesAvailable?.[edition.instanceId] ? "bg-[#ffff55]" : "bg-white"}`}
+                      />
+                      <div
+                        className={`w-1.5 h-1.5 ${updatesAvailable?.[edition.instanceId] ? "bg-[#ffff55]" : "bg-white"}`}
+                      />
+                      <div
+                        className={`w-1.5 h-1.5 ${updatesAvailable?.[edition.instanceId] ? "bg-[#ffff55]" : "bg-white"}`}
+                      />
+                    </button>
 
                     {openMenuId === edition.id && (
                       <div
@@ -526,6 +589,126 @@ const VersionsView = memo(function VersionsView() {
                             Update Available!
                           </button>
                         )}
+                        {!isAndroid && !isInstalled && (
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              setOpenMenuId(null);
+                              try {
+                                const folder = await TauriService.pickFolder();
+                                if (folder) {
+                                  const entries =
+                                    await TauriService.listDirectory(folder);
+                                  if (entries.length > 0) {
+                                    const dialog =
+                                      document.createElement("div");
+                                    dialog.className =
+                                      "fixed inset-0 bg-black/80 flex items-center justify-center z-50";
+                                    dialog.innerHTML = `
+                                      <div class="w-[420px] p-4 flex flex-col items-center mc-options-bg">
+                                        <h3 class="text-2xl font-bold text-[#333333] mb-4 text-left w-full px-4 mc-text-shadow">Invalid Directory</h3>
+                                        <p class="text-[#333333] mb-6 text-left w-full px-4">Please select an empty directory for installation.</p>
+                                        <div class="flex flex-col gap-3 w-full px-4">
+                                          <button id="empty-dir-ok" class="w-full h-10 flex items-center justify-center text-lg mc-text-shadow text-white hover:text-[#ffff00]" style="background-image: url('/images/Button_Background.png'); background-size: 100% 100%; image-rendering: pixelated; border: none; cursor: pointer;" onmouseenter="this.style.backgroundImage='url(/images/button_highlighted.png)'" onmouseleave="this.style.backgroundImage='url(/images/Button_Background.png)'">OK</button>
+                                        </div>
+                                      </div>
+                                    `;
+                                    document.body.appendChild(dialog);
+                                    const close = () =>
+                                      document.body.removeChild(dialog);
+                                    dialog
+                                      .querySelector("#empty-dir-ok")
+                                      ?.addEventListener("click", close);
+                                    dialog.addEventListener("click", (e) => {
+                                      if (e.target === dialog) close();
+                                    });
+                                    return;
+                                  }
+                                  await saveCustomPath(
+                                    edition.instanceId,
+                                    folder,
+                                  );
+                                  toggleInstall(edition.instanceId);
+                                }
+                              } catch (err) {
+                                if (err !== "CANCELED") console.error(err);
+                              }
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
+                          >
+                            <img
+                              src="/images/Download_Icon.png"
+                              alt=""
+                              className="w-3.5 h-3.5 object-contain"
+                              style={{ imageRendering: "pixelated" }}
+                            />
+                            Download to custom path
+                          </button>
+                        )}
+                        {edition.officialDLC && isInstalled ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              setDlcTargetEdition(edition);
+                              setIsDlcModalOpen(true);
+                              setOpenMenuId(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-[10px] text-[#dddddd] flex items-center gap-2 mc-text-shadow"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              className="w-3.5 h-3.5"
+                            >
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <polyline points="17 8 12 3 7 8" />
+                              <line x1="12" y1="3" x2="12" y2="15" />
+                            </svg>
+                            Download DLC
+                          </button>
+                        ) : null}
+                        {argsSchemas[edition.instanceId] && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              setOptionsTarget({
+                                id: edition.instanceId,
+                                name: edition.name,
+                              });
+                              setIsOptionsModalOpen(true);
+                              setOpenMenuId(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              className="w-3.5 h-3.5"
+                            >
+                              <line x1="4" y1="21" x2="4" y2="14" />
+                              <line x1="4" y1="10" x2="4" y2="3" />
+                              <line x1="12" y1="21" x2="12" y2="12" />
+                              <line x1="12" y1="8" x2="12" y2="3" />
+                              <line x1="20" y1="21" x2="20" y2="16" />
+                              <line x1="20" y1="12" x2="20" y2="3" />
+                              <line x1="1" y1="14" x2="7" y2="14" />
+                              <line x1="9" y1="8" x2="15" y2="8" />
+                              <line x1="17" y1="16" x2="23" y2="16" />
+                            </svg>
+                            Options
+                          </button>
+                        )}
                         {Array.isArray(edition.branches) &&
                           edition.branches.length > 0 && (
                             <button
@@ -534,9 +717,9 @@ const VersionsView = memo(function VersionsView() {
                                 playPressSound();
                                 cycleBranch(edition.id);
                               }}
-                              className="w-full text-left px-3 py-1.5 text-[10px] text-white mc-text-shadow hover:bg-white/10 flex items-center justify-between group transition-colors"
+                              className="w-full text-left px-3 py-1.5 text-[10px] text-white mc-text-shadow flex items-center justify-between group"
                             >
-                              <span className="text-[#AAAAAA] group-hover:text-white font-bold">
+                              <span className="text-[#AAAAAA] font-bold">
                                 Channel
                               </span>
                               <span className="text-[#ffff55] font-bold">
@@ -545,134 +728,173 @@ const VersionsView = memo(function VersionsView() {
                             </button>
                           )}
                         <div className="h-[1px] bg-white/5 my-0.5 mx-1" />
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            playPressSound();
-                            TauriService.openInstanceFolder(edition.instanceId);
-                            setOpenMenuId(null);
-                          }}
-                          className="w-full text-left px-3 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-white/10 flex items-center gap-2 transition-colors mc-text-shadow"
-                        >
-                          <img
-                            src="/images/Folder_Icon.png"
-                            alt=""
-                            className="w-3.5 h-3.5 object-contain"
-                            style={{ imageRendering: "pixelated" }}
-                          />
-                          Open Folder
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            playPressSound();
-                            const PANORAMA_PROFILES = [
-                              "legacy_evolved",
-                              "vanilla_tu19",
-                              "360revived",
-                              "vanilla_tu24",
-                            ];
-                            const panoId = PANORAMA_PROFILES.includes(
-                              edition.id,
-                            )
-                              ? edition.id
-                              : "vanilla_tu19";
-                            const panoramaUrl = `/panorama/${panoId}_Panorama_Background_${isDayTime ? "Day" : "Night"}.png`;
-                            addToSteam(
-                              edition.instanceId,
-                              edition.name,
-                              edition.titleImage ?? "",
-                              panoramaUrl,
-                            );
-                            setOpenMenuId(null);
-                          }}
-                          className="w-full text-left px-3 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-white/10 flex items-center gap-2 transition-colors mc-text-shadow"
-                        >
-                          <img
-                            src="/images/steam.png"
-                            alt=""
-                            className="w-3.5 h-3.5 object-contain invert brightness-0"
-                            style={{ imageRendering: "pixelated" }}
-                          />
-                          Add to Steam
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            playPressSound();
-                            handleImportWorld(edition.instanceId);
-                            setOpenMenuId(null);
-                          }}
-                          className="w-full text-left px-3 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-white/10 flex items-center gap-2 transition-colors mc-text-shadow"
-                        >
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            className="w-3.5 h-3.5"
+                        {!isAndroid && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              TauriService.openInstanceFolder(
+                                edition.instanceId,
+                              );
+                              setOpenMenuId(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
                           >
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="7 10 12 15 17 10" />
-                            <line x1="12" y1="15" x2="12" y2="3" />
-                          </svg>
-                          Import World
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            playPressSound();
-                            TauriService.backupInstance(edition.instanceId).catch((err) => {
-                              if (err !== "CANCELED") console.error(err);
-                            });
-                            setOpenMenuId(null);
-                          }}
-                          className="w-full text-left px-3 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-white/10 flex items-center gap-2 transition-colors mc-text-shadow"
-                        >
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            className="w-3.5 h-3.5"
+                            <img
+                              src="/images/Folder_Icon.png"
+                              alt=""
+                              className="w-3.5 h-3.5 object-contain"
+                              style={{ imageRendering: "pixelated" }}
+                            />
+                            Open Folder
+                          </button>
+                        )}
+                        {!isAndroid && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              const PANORAMA_PROFILES = [
+                                "legacy_evolved",
+                                "vanilla_tu19",
+                                "360revived",
+                                "vanilla_tu24",
+                              ];
+                              const panoId = PANORAMA_PROFILES.includes(
+                                edition.id,
+                              )
+                                ? edition.id
+                                : "vanilla_tu19";
+                              const panoramaUrl = `/panorama/${panoId}_Panorama_Background_${isDayTime ? "Day" : "Night"}.png`;
+                              addToSteam(
+                                edition.instanceId,
+                                edition.name,
+                                edition.titleImage ?? "",
+                                panoramaUrl,
+                              );
+                              setOpenMenuId(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
                           >
-                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                            <polyline points="17 21 17 13 7 13 7 21" />
-                            <polyline points="7 3 7 8 15 8" />
-                          </svg>
-                          Backup
-                        </button>
-                        <button
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            playPressSound();
-                            setOpenMenuId(null);
-                            try {
-                              await TauriService.restoreInstance();
-                            } catch (err) {
-                              if (err !== "CANCELED") console.error(err);
-                            }
-                          }}
-                          className="w-full text-left px-3 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-white/10 flex items-center gap-2 transition-colors mc-text-shadow"
-                        >
-                          <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            className="w-3.5 h-3.5"
+                            <img
+                              src="/images/steam.png"
+                              alt=""
+                              className="w-3.5 h-3.5 object-contain invert brightness-0"
+                              style={{ imageRendering: "pixelated" }}
+                            />
+                            Add to Steam
+                          </button>
+                        )}
+                        {!isAndroid && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              handleImportWorld(edition.instanceId);
+                              setOpenMenuId(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
                           >
-                            <path d="M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9z" />
-                            <polyline points="12 7 12 12 15 15" />
-                          </svg>
-                          Restore
-                        </button>
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              className="w-3.5 h-3.5"
+                            >
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <polyline points="7 10 12 15 17 10" />
+                              <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                            Import World
+                          </button>
+                        )}
+                        {!isAndroid && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              TauriService.backupInstance(
+                                edition.instanceId,
+                              ).catch((err) => {
+                                if (err !== "CANCELED") console.error(err);
+                              });
+                              setOpenMenuId(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              className="w-3.5 h-3.5"
+                            >
+                              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                              <polyline points="17 21 17 13 7 13 7 21" />
+                              <polyline points="7 3 7 8 15 8" />
+                            </svg>
+                            Backup
+                          </button>
+                        )}
+                        {!isAndroid && (
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              setOpenMenuId(null);
+                              try {
+                                await TauriService.restoreInstance();
+                              } catch (err) {
+                                if (err !== "CANCELED") console.error(err);
+                              }
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              className="w-3.5 h-3.5"
+                            >
+                              <path d="M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9z" />
+                              <polyline points="12 7 12 12 15 15" />
+                            </svg>
+                            Restore
+                          </button>
+                        )}
+                        {!isAndroid && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              playPressSound();
+                              setCustomizeTarget(edition);
+                              setIsCustomizeModalOpen(true);
+                              setOpenMenuId(null);
+                            }}
+                            className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
+                          >
+                            <svg
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              className="w-3.5 h-3.5"
+                            >
+                              <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                            </svg>
+                            Customize
+                          </button>
+                        )}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -681,7 +903,7 @@ const VersionsView = memo(function VersionsView() {
                             setIsSetUidModalOpen(true);
                             setOpenMenuId(null);
                           }}
-                          className="w-full text-left px-3 py-2 text-xs text-[#dddddd] hover:text-white hover:bg-white/10 flex items-center gap-2 transition-colors mc-text-shadow"
+                          className="w-full text-left px-3 py-2 text-xs text-[#dddddd] flex items-center gap-2 mc-text-shadow"
                         >
                           <svg
                             width="14"
@@ -706,7 +928,7 @@ const VersionsView = memo(function VersionsView() {
                               setIsImportModalOpen(true);
                               setOpenMenuId(null);
                             }}
-                            className="w-full text-left px-3 py-2 text-xs text-[#aaaaaa] hover:text-white hover:bg-white/10 flex items-center gap-2 transition-colors mc-text-shadow"
+                            className="w-full text-left px-3 py-2 text-xs text-[#aaaaaa] flex items-center gap-2 mc-text-shadow"
                           >
                             <svg
                               width="14"
@@ -758,14 +980,14 @@ const VersionsView = memo(function VersionsView() {
                   setInitialPath("");
                   setIsImportModalOpen(true);
                 }}
-                onMouseEnter={() => setFocusIndex(editions.length)}
+                onMouseEnter={() => setFocusIndex(visibleEditions.length)}
                 onMouseLeave={() => setHoveredBtn(null)}
                 className="w-8 h-8 flex items-center justify-center text-[#3a3a3a]"
                 style={{
                   backgroundImage:
-                    (hoveredBtn?.row === editions.length &&
+                    (hoveredBtn?.row === visibleEditions.length &&
                       hoveredBtn?.btn === "add") ||
-                    focusIndex === editions.length
+                    focusIndex === visibleEditions.length
                       ? "url('/images/Button_Square_Highlighted.png')"
                       : "url('/images/Button_Square.png')",
                   backgroundSize: "100% 100%",
@@ -785,59 +1007,63 @@ const VersionsView = memo(function VersionsView() {
                 </svg>
               </button>
 
-              <button
-                onClick={() => {
-                  playPressSound();
-                  handleImportFolder();
-                }}
-                onMouseEnter={() => setFocusIndex(editions.length + 1)}
-                onMouseLeave={() => setHoveredBtn(null)}
-                title="Import Custom TU"
-                className="w-8 h-8 flex items-center justify-center text-[#3a3a3a]"
-                style={{
-                  backgroundImage:
-                    (hoveredBtn?.row === editions.length &&
-                      hoveredBtn?.btn === "folder_import") ||
-                    focusIndex === editions.length + 1
-                      ? "url('/images/Button_Square_Highlighted.png')"
-                      : "url('/images/Button_Square.png')",
-                  backgroundSize: "100% 100%",
-                  imageRendering: "pixelated",
-                }}
-              >
-                <img
-                  src="/images/Folder_Icon.png"
-                  alt="Import Custom TU"
-                  className="w-5 h-5 object-contain"
-                  style={{ imageRendering: "pixelated" }}
-                />
-              </button>
+              {!isAndroid && (
+                <button
+                  onClick={() => {
+                    playPressSound();
+                    handleImportFolder();
+                  }}
+                  onMouseEnter={() => setFocusIndex(visibleEditions.length + 1)}
+                  onMouseLeave={() => setHoveredBtn(null)}
+                  title="Import Custom TU"
+                  className="w-8 h-8 flex items-center justify-center text-[#3a3a3a]"
+                  style={{
+                    backgroundImage:
+                      (hoveredBtn?.row === visibleEditions.length &&
+                        hoveredBtn?.btn === "folder_import") ||
+                      focusIndex === visibleEditions.length + 1
+                        ? "url('/images/Button_Square_Highlighted.png')"
+                        : "url('/images/Button_Square.png')",
+                    backgroundSize: "100% 100%",
+                    imageRendering: "pixelated",
+                  }}
+                >
+                  <img
+                    src="/images/Folder_Icon.png"
+                    alt="Import Custom TU"
+                    className="w-5 h-5 object-contain"
+                    style={{ imageRendering: "pixelated" }}
+                  />
+                </button>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="flex justify-center">
-        <button
-          data-index={editions.length + 2}
-          onMouseEnter={() => setFocusIndex(editions.length + 2)}
-          onClick={() => {
-            playBackSound();
-            setActiveView("main");
-          }}
-          className="w-48 h-10 flex items-center justify-center text-xl mc-text-shadow outline-none border-none text-white"
-          style={{
-            backgroundImage:
-              focusIndex === editions.length + 2
-                ? "url('/images/button_highlighted.png')"
-                : "url('/images/Button_Background.png')",
-            backgroundSize: "100% 100%",
-            imageRendering: "pixelated",
-          }}
-        >
-          Done
-        </button>
-      </div>
+      {!isAndroid && (
+        <div className="flex justify-center">
+          <button
+            data-index={visibleEditions.length + 2}
+            onMouseEnter={() => setFocusIndex(visibleEditions.length + 2)}
+            onClick={() => {
+              playBackSound();
+              setActiveView("main");
+            }}
+            className="w-48 h-10 flex items-center justify-center text-xl mc-text-shadow outline-none border-none text-white"
+            style={{
+              backgroundImage:
+                focusIndex === visibleEditions.length + 2
+                  ? "url('/images/button_highlighted.png')"
+                  : "url('/images/Button_Background.png')",
+              backgroundSize: "100% 100%",
+              imageRendering: "pixelated",
+            }}
+          >
+            Done
+          </button>
+        </div>
+      )}
 
       <CustomTUModal
         isOpen={isImportModalOpen}
@@ -846,7 +1072,12 @@ const VersionsView = memo(function VersionsView() {
           setEditingEdition(null);
           setInitialPath("");
         }}
-        onImport={(ed: { name: string; desc: string; url: string; path?: string }) => {
+        onImport={(ed: {
+          name: string;
+          desc: string;
+          url: string;
+          path?: string;
+        }) => {
           if (editingEdition) {
             onUpdateEdition(editingEdition.id, ed);
           } else {
@@ -865,14 +1096,17 @@ const VersionsView = memo(function VersionsView() {
         onClose={() => setIsSetUidModalOpen(false)}
         playPressSound={playPressSound}
         playBackSound={playBackSound}
-        instances={editions}
+        instances={visibleEditions}
         installedVersions={installedVersions}
         targetInstanceId={setUidTargetId}
       />
 
       <ImportWorldModal
         isOpen={isImportWorldModalOpen}
-        onClose={() => { setIsImportWorldModalOpen(false); setImportWorldTarget(null); }}
+        onClose={() => {
+          setIsImportWorldModalOpen(false);
+          setImportWorldTarget(null);
+        }}
         playPressSound={playPressSound}
         playBackSound={playBackSound}
         targetInstanceId={importWorldTarget?.id ?? ""}
@@ -881,10 +1115,77 @@ const VersionsView = memo(function VersionsView() {
 
       <PlaytimeModal
         isOpen={isPlaytimeModalOpen}
-        onClose={() => { setIsPlaytimeModalOpen(false); setPlaytimeTarget(null); }}
+        onClose={() => {
+          setIsPlaytimeModalOpen(false);
+          setPlaytimeTarget(null);
+        }}
         playBackSound={playBackSound}
         instanceId={playtimeTarget?.id ?? ""}
         instanceName={playtimeTarget?.name ?? ""}
+      />
+
+      <CustomizeModal
+        isOpen={isCustomizeModalOpen}
+        onClose={() => {
+          setIsCustomizeModalOpen(false);
+          setCustomizeTarget(null);
+        }}
+        playPressSound={playPressSound}
+        playBackSound={playBackSound}
+        editionName={customizeTarget?.name ?? ""}
+        currentTitleImage={
+          customizeTarget
+            ? customizations[customizeTarget.instanceId]?.titleImage ||
+              customizeTarget.titleImage
+            : undefined
+        }
+        currentPanorama={
+          customizeTarget
+            ? customizations[customizeTarget.instanceId]?.panorama ||
+              customizeTarget.panorama
+            : undefined
+        }
+        onSave={(updates) => {
+          if (customizeTarget) {
+            updateCustomization(customizeTarget.instanceId, updates);
+          }
+        }}
+      />
+
+      <DownloadDlcModal
+        isOpen={isDlcModalOpen}
+        onClose={() => {
+          setIsDlcModalOpen(false);
+          setDlcTargetEdition(null);
+        }}
+        playPressSound={playPressSound}
+        playBackSound={playBackSound}
+        editionName={dlcTargetEdition?.name ?? ""}
+        instanceId={dlcTargetEdition?.instanceId ?? ""}
+        officialDLC={dlcTargetEdition?.officialDLC ?? ""}
+      />
+
+      <OptionsModal
+        isOpen={isOptionsModalOpen}
+        onClose={() => {
+          setIsOptionsModalOpen(false);
+          setOptionsTarget(null);
+        }}
+        playPressSound={playPressSound}
+        playBackSound={playBackSound}
+        instanceId={optionsTarget?.id ?? ""}
+        instanceName={optionsTarget?.name ?? ""}
+        savedValues={
+          optionsTarget
+            ? instanceLaunchArgs[optionsTarget.id]?.values
+            : undefined
+        }
+        onSave={(instanceId, values, args) => {
+          setInstanceLaunchArgs((prev) => ({
+            ...prev,
+            [instanceId]: { values, args },
+          }));
+        }}
       />
 
       {deleteConfirmEdition && (

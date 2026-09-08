@@ -1,5 +1,6 @@
 import { useState, useEffect, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { usePlatform } from "../../hooks/usePlatform";
 import {
   useUI,
   useAudio,
@@ -15,6 +16,7 @@ import { ScreenshotImage } from "../common/ScreenshotImage";
 const ScreenshotsView = memo(function ScreenshotsView() {
   const { setActiveView } = useUI();
   const { playPressSound, playBackSound } = useAudio();
+  const { isAndroid } = usePlatform();
   const { editions } = useGame();
   const { animationsEnabled } = useConfig();
   const [screenshots, setScreenshots] = useState<ScreenshotInfo[]>([]);
@@ -195,8 +197,8 @@ const ScreenshotsView = memo(function ScreenshotsView() {
                   }}
                   onMouseEnter={() => setGridFocusIndex(index)}
                   className={`
-                    relative aspect-video flex flex-col cursor-pointer transition-all border-2 rounded-sm overflow-hidden bg-black/40
-                    ${gridFocusIndex === index ? "border-[#FFFF55] scale-105 z-10" : "border-[#333] hover:border-[#FFFF55]"}
+                    relative aspect-video flex flex-col cursor-pointer border-2 rounded-sm overflow-hidden bg-black/40
+                    ${gridFocusIndex === index ? "border-[#FFFF55] z-10" : "border-[#333]"}
                   `}
                   style={{
                     backgroundImage: "url('/images/frame_background.png')",
@@ -211,7 +213,7 @@ const ScreenshotsView = memo(function ScreenshotsView() {
                   <div className="w-full h-full relative overflow-hidden bg-black/50">
                     <ScreenshotImage
                       path={ss.path}
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                      className="w-full h-full object-cover"
                       loading="lazy"
                       alt={ss.name}
                       fallbackSrc="/images/Folder_Icon.png"
@@ -239,30 +241,32 @@ const ScreenshotsView = memo(function ScreenshotsView() {
         </div>
       </div>
 
-      <div className="w-full mt-6 mb-4 flex justify-center">
-        <button
-          onClick={handleBack}
-          className={`
-            w-72 h-10 flex items-center justify-center text-xl mc-text-shadow border-none outline-none transition-all text-white
-            hover:text-[#FFFF55]
-          `}
-          style={{
-            backgroundImage: "url('/images/Button_Background.png')",
-            backgroundSize: "100% 100%",
-            imageRendering: "pixelated",
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.backgroundImage =
-              "url('/images/button_highlighted.png')";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.backgroundImage =
-              "url('/images/Button_Background.png')";
-          }}
-        >
-          Back
-        </button>
-      </div>
+      {!isAndroid && (
+        <div className="w-full mt-6 mb-4 flex justify-center">
+          <button
+            onClick={handleBack}
+            className={`
+              w-72 h-10 flex items-center justify-center text-xl mc-text-shadow border-none outline-none transition-all text-white
+              hover:text-[#FFFF55]
+            `}
+            style={{
+              backgroundImage: "url('/images/Button_Background.png')",
+              backgroundSize: "100% 100%",
+              imageRendering: "pixelated",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundImage =
+                "url('/images/button_highlighted.png')";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.backgroundImage =
+                "url('/images/Button_Background.png')";
+            }}
+          >
+            Back
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
         {selectedScreenshot && (
@@ -270,7 +274,7 @@ const ScreenshotsView = memo(function ScreenshotsView() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center p-8 backdrop-blur-md"
+            className="fixed inset-0 z-[200] bg-black/90 flex flex-col items-center justify-center p-4 sm:p-8 backdrop-blur-md"
             onClick={() => setSelectedScreenshot(null)}
           >
             <motion.div
@@ -278,7 +282,7 @@ const ScreenshotsView = memo(function ScreenshotsView() {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="relative max-w-5xl w-full flex flex-col items-center border-2 border-[#555] rounded-sm p-2"
+              className="relative max-w-5xl w-full max-h-[92vh] overflow-y-auto flex flex-col items-center border-2 border-[#555] rounded-sm p-2"
               style={{
                 backgroundImage: "url('/images/frame_background.png')",
                 backgroundSize: "100% 100%",
@@ -286,11 +290,11 @@ const ScreenshotsView = memo(function ScreenshotsView() {
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="relative w-full aspect-video bg-black/60 overflow-hidden border border-[#444] rounded-sm">
+              <div className="relative w-full aspect-video max-h-[55vh] bg-black/60 overflow-hidden border border-[#444] rounded-sm">
                 <ScreenshotImage
                   path={selectedScreenshot.path}
                   className="w-full h-full object-contain"
-                  fallbackSrc="/images/Pack_Icon.png"
+                  fallbackSrc="/images/Folder_Icon.png"
                 />
                 <div className="absolute bottom-4 left-6 right-6 flex items-end justify-between pointer-events-none">
                   <div className="flex flex-col gap-1">
@@ -314,13 +318,13 @@ const ScreenshotsView = memo(function ScreenshotsView() {
                 </div>
               </div>
 
-              <div className="flex gap-6 mt-6 mb-2 w-full justify-center px-6">
+              <div className="flex flex-wrap gap-4 sm:gap-6 mt-4 sm:mt-6 mb-2 w-full justify-center px-4 sm:px-6">
                 <button
                   onMouseEnter={() => setModalFocusIndex(0)}
                   onClick={() => handleOpenFolder(selectedScreenshot)}
                   className={`
-                    flex-1 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer transition-all
-                    ${modalFocusIndex === 0 ? "text-[#FFFF55] scale-105" : "text-white"}
+                    flex-1 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer
+                    ${modalFocusIndex === 0 ? "text-[#FFFF55]" : "text-white"}
                   `}
                   style={{
                     backgroundImage:
@@ -341,8 +345,8 @@ const ScreenshotsView = memo(function ScreenshotsView() {
                     setShowDeleteConfirm(true);
                   }}
                   className={`
-                    flex-1 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer transition-all
-                    ${modalFocusIndex === 1 ? "text-[#FF5555] scale-105" : "text-white"}
+                    flex-1 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer
+                    ${modalFocusIndex === 1 ? "text-[#FF5555]" : "text-white"}
                   `}
                   style={{
                     backgroundImage:
@@ -359,8 +363,8 @@ const ScreenshotsView = memo(function ScreenshotsView() {
                   onMouseEnter={() => setModalFocusIndex(2)}
                   onClick={() => setSelectedScreenshot(null)}
                   className={`
-                    w-48 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer transition-all
-                    ${modalFocusIndex === 2 ? "text-[#FFFF55] scale-105" : "text-white"}
+                    w-48 h-12 flex items-center justify-center text-xl mc-text-shadow border-none outline-none cursor-pointer
+                    ${modalFocusIndex === 2 ? "text-[#FFFF55]" : "text-white"}
                   `}
                   style={{
                     backgroundImage:
@@ -391,7 +395,7 @@ const ScreenshotsView = memo(function ScreenshotsView() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="w-[420px] p-6 border-2 border-[#555] rounded-sm flex flex-col items-center"
+              className="w-[420px] max-w-[92vw] p-4 sm:p-6 border-2 border-[#555] rounded-sm flex flex-col items-center"
               style={{
                 backgroundImage: "url('/images/frame_background.png')",
                 backgroundSize: "100% 100%",
@@ -411,8 +415,8 @@ const ScreenshotsView = memo(function ScreenshotsView() {
                     setShowDeleteConfirm(false);
                   }}
                   className={`
-                    flex-1 h-10 flex items-center justify-center text-lg mc-text-shadow border-none outline-none cursor-pointer transition-all
-                    ${deleteConfirmFocusIndex === 0 ? "text-[#FFFF55] scale-105" : "text-white"}
+                    flex-1 h-10 flex items-center justify-center text-lg mc-text-shadow border-none outline-none cursor-pointer
+                    ${deleteConfirmFocusIndex === 0 ? "text-[#FFFF55]" : "text-white"}
                   `}
                   style={{
                     backgroundImage:
@@ -429,8 +433,8 @@ const ScreenshotsView = memo(function ScreenshotsView() {
                   onMouseEnter={() => setDeleteConfirmFocusIndex(1)}
                   onClick={confirmDelete}
                   className={`
-                    flex-1 h-10 flex items-center justify-center text-lg mc-text-shadow border-none outline-none cursor-pointer transition-all
-                    ${deleteConfirmFocusIndex === 1 ? "text-[#FF5555] scale-105" : "text-white"}
+                    flex-1 h-10 flex items-center justify-center text-lg mc-text-shadow border-none outline-none cursor-pointer
+                    ${deleteConfirmFocusIndex === 1 ? "text-[#FF5555]" : "text-white"}
                   `}
                   style={{
                     backgroundImage:

@@ -63,15 +63,24 @@ export default function LocEditorView() {
   const handleLocStringEdit = (langIdx: number, strIdx: number, isNew: boolean, key: string, value: string) => {
     if (!loc) return;
     playPressSound();
-    const newLoc = { ...loc };
-    const lang = newLoc.languages[langIdx];
-    if (isNew) {
-      lang.strings.push(lang.isStatic ? { value } : { key, value });
-    } else {
-      if (!lang.isStatic) lang.strings[strIdx].key = key;
-      lang.strings[strIdx].value = value;
-    }
-    setLoc(newLoc);
+    setLoc({
+      ...loc,
+      languages: loc.languages.map((lang, lIdx) => {
+        if (lIdx !== langIdx) return lang;
+        if (isNew) {
+          return {
+            ...lang,
+            strings: [...lang.strings, lang.isStatic ? { value } : { key, value }]
+          };
+        }
+        return {
+          ...lang,
+          strings: lang.strings.map((str, sIdx) =>
+            sIdx !== strIdx ? str : { ...str, ...(!lang.isStatic ? { key } : {}), value }
+          )
+        };
+      })
+    });
     setIsLocEditModalOpen(null);
     showNotification(isNew ? "String Added" : "String Updated");
   };
@@ -79,9 +88,12 @@ export default function LocEditorView() {
   const handleLocStringDelete = (langIdx: number, strIdx: number) => {
     if (!loc) return;
     playBackSound();
-    const newLoc = { ...loc };
-    newLoc.languages[langIdx].strings.splice(strIdx, 1);
-    setLoc(newLoc);
+    setLoc({
+      ...loc,
+      languages: loc.languages.map((lang, lIdx) =>
+        lIdx !== langIdx ? lang : { ...lang, strings: lang.strings.filter((_, sIdx) => sIdx !== strIdx) }
+      )
+    });
     showNotification("String Deleted");
   };
 
@@ -91,7 +103,7 @@ export default function LocEditorView() {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       transition={{ duration: animationsEnabled ? 0.3 : 0 }}
-      className="flex flex-col w-full h-[85vh] max-w-7xl relative"
+      className="flex flex-col w-full h-full max-w-7xl relative"
     >
       <input type="file" ref={fileInputRef} onChange={handleFileLoad} className="hidden" accept=".loc" />
       <div className="flex items-center justify-between mb-6 px-4">
@@ -163,20 +175,20 @@ export default function LocEditorView() {
                 </thead>
                 <tbody>
                   {filteredLocStrings.map((str) => (
-                    <tr key={str.originalIdx} className="border-b border-[#373737]/30 hover:bg-white/5 transition-colors group">
+                    <tr key={str.originalIdx} className="border-b border-[#373737]/30 group">
                       <td className="p-3 text-[#FFFF55] font-mono text-sm max-w-[200px] truncate">
                         {currentLocLang?.isStatic ? str.originalIdx : str.key}
                       </td>
                       <td className="p-3 text-white text-sm whitespace-pre-wrap">{str.value}</td>
-                      <td className="p-3 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                      <td className="p-3 text-right">
                         <div className="flex justify-end gap-2">
                           <button
                             onClick={() => setIsLocEditModalOpen({ langIdx: selectedLocLangIdx, strIdx: str.originalIdx, isNew: false })}
-                            className="px-2 py-1 text-[10px] bg-white/10 hover:bg-[#FFFF55]/20 hover:text-[#FFFF55] border border-white/20 transition-all uppercase"
+                            className="px-2 py-1 text-[10px] bg-white/10 hover:bg-[#FFFF55]/20 hover:text-[#FFFF55] border border-white/20 uppercase"
                           >
                             Edit
                           </button>
-                          <button onClick={() => handleLocStringDelete(selectedLocLangIdx, str.originalIdx)} className="p-1 hover:text-red-500 transition-colors opacity-60 hover:opacity-100">
+                          <button onClick={() => handleLocStringDelete(selectedLocLangIdx, str.originalIdx)} className="p-1 hover:text-red-500 opacity-60">
                             <img src="/images/Trash_Bin_Icon.png" className="w-4 h-4 object-contain" style={{ imageRendering: "pixelated" }} />
                           </button>
                         </div>
@@ -189,10 +201,10 @@ export default function LocEditorView() {
           </div>
         </div>
       )}
-      <div className="flex justify-center mt-6 h-14">
+      <div className="flex justify-center mt-6 h-14 shrink-0">
         <button
           onClick={() => { playBackSound(); setActiveView("devtools"); }}
-          className="w-72 h-full flex items-center justify-center transition-colors text-2xl mc-text-shadow outline-none border-none hover:text-[#FFFF55] text-white"
+          className="w-72 h-full shrink-0 flex items-center justify-center transition-colors text-2xl mc-text-shadow outline-none border-none hover:text-[#FFFF55] text-white"
           style={{ backgroundImage: "url('/images/Button_Background.png')", backgroundSize: "100% 100%", imageRendering: "pixelated" }}
         >
           Back

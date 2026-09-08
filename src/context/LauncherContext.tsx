@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
 import { useAppConfig } from "../hooks/useAppConfig";
 import { TauriService } from "../services/TauriService";
 import { useAudioController } from "../hooks/useAudioController";
@@ -7,6 +14,8 @@ import { useSkinSync } from "../hooks/useSkinSync";
 import { useDiscordRPC } from "../hooks/useDiscordRPC";
 import { useGamepad } from "../hooks/useGamepad";
 import { useUpdateCheck } from "../hooks/useUpdateCheck";
+import { SPLASHES } from "../data/splashes";
+import RpcService from "../services/RpcService";
 
 interface UIContextType {
   activeView: string;
@@ -18,8 +27,6 @@ interface UIContextType {
   isUiHidden: boolean;
   setIsUiHidden: (hidden: boolean) => void;
   isWindowVisible: boolean;
-  showCredits: boolean;
-  setShowCredits: (show: boolean) => void;
   focusSection: "menu" | "skin";
   setFocusSection: (section: "menu" | "skin") => void;
   onNavigateToSkin: () => void;
@@ -30,17 +37,24 @@ interface UIContextType {
   clearUpdateMessage: () => void;
 }
 const UIContext = createContext<UIContextType | undefined>(undefined);
-export const ConfigContext = createContext<ReturnType<typeof useAppConfig> | undefined>(undefined);
-export const AudioContext = createContext<ReturnType<typeof useAudioController> | undefined>(undefined);
-export const GameContext = createContext<ReturnType<typeof useGameManager> | undefined>(undefined);
-export const SkinContext = createContext<ReturnType<typeof useSkinSync> | undefined>(undefined);
+export const ConfigContext = createContext<
+  ReturnType<typeof useAppConfig> | undefined
+>(undefined);
+export const AudioContext = createContext<
+  ReturnType<typeof useAudioController> | undefined
+>(undefined);
+export const GameContext = createContext<
+  ReturnType<typeof useGameManager> | undefined
+>(undefined);
+export const SkinContext = createContext<
+  ReturnType<typeof useSkinSync> | undefined
+>(undefined);
 export function LauncherProvider({ children }: { children: React.ReactNode }) {
   const [showIntro, setShowIntro] = useState(true);
   const [logoAnimDone, setLogoAnimDone] = useState(false);
   const [activeView, setActiveView] = useState("main");
   const [isUiHidden, setIsUiHidden] = useState(false);
   const [isWindowVisible, setIsWindowVisible] = useState(true);
-  const [showCredits, setShowCredits] = useState(false);
   const [focusSection, setFocusSection] = useState<"menu" | "skin">("menu");
 
   const { updateMessage, updateUrl, clearUpdateMessage } = useUpdateCheck();
@@ -51,39 +65,98 @@ export function LauncherProvider({ children }: { children: React.ReactNode }) {
     setProfile: configRaw.setProfile,
     customEditions: configRaw.customEditions,
     setCustomEditions: configRaw.setCustomEditions,
+    customPaths: configRaw.customPaths,
+    setCustomPaths: configRaw.setCustomPaths,
+    customizations: configRaw.customizations,
+    setCustomizations: configRaw.setCustomizations,
     extraLaunchArgs: configRaw.extraLaunchArgs,
   });
-  const skinSync = useSkinSync({ username: configRaw.username, profile: configRaw.profile, editions: gameRaw.editions });
+  const skinSync = useSkinSync({
+    username: configRaw.username,
+    profile: configRaw.profile,
+    editions: gameRaw.editions,
+  });
   const audioRaw = useAudioController({
     musicVol: configRaw.musicVol,
     sfxVol: configRaw.sfxVol,
-    showIntro,
     isGameRunning: gameRaw.isGameRunning,
     isWindowVisible,
   });
 
-  const config = useMemo(() => configRaw, [
-    configRaw.username, configRaw.theme, configRaw.layout, configRaw.vfxEnabled,
-    configRaw.rpcEnabled, configRaw.musicVol, configRaw.sfxVol, configRaw.isDayTime,
-    configRaw.profile, configRaw.linuxRunner, configRaw.perfBoost, configRaw.customEditions,
-    configRaw.legacyMode, configRaw.animationsEnabled, configRaw.mangohudEnabled,
-    configRaw.extraLaunchArgs, configRaw.launchPrefix, configRaw.launchEnvVars
-  ]);
+  const config = useMemo(
+    () => configRaw,
+    [
+      configRaw.username,
+      configRaw.theme,
+      configRaw.layout,
+      configRaw.vfxEnabled,
+      configRaw.rpcEnabled,
+      configRaw.musicVol,
+      configRaw.sfxVol,
+      configRaw.isDayTime,
+      configRaw.profile,
+      configRaw.linuxRunner,
+      configRaw.perfBoost,
+      configRaw.customEditions,
+      configRaw.customPaths,
+      configRaw.customizations,
+      configRaw.legacyMode,
+      configRaw.animationsEnabled,
+      configRaw.mangohudEnabled,
+      configRaw.extraLaunchArgs,
+      configRaw.launchPrefix,
+      configRaw.launchEnvVars,
+      configRaw.startFullscreen,
+      configRaw.skipIntro,
+      configRaw.instanceLaunchArgs,
+      configRaw.androidRunner,
+      configRaw.androidAudioBackend,
+    ],
+  );
 
-  const game = useMemo(() => gameRaw, [
-    gameRaw.installs, gameRaw.isGameRunning, gameRaw.downloadProgress,
-    gameRaw.downloadingId, gameRaw.editions, gameRaw.isRunnerDownloading,
-    gameRaw.runnerDownloadProgress, gameRaw.error, gameRaw.updateCustomEdition,
-    gameRaw.handleUninstall, gameRaw.handleCancelDownload, gameRaw.gameUpdateMessage, configRaw.profile,
-    gameRaw.updatesAvailable, gameRaw.addToSteam, gameRaw.steamSuccessMessage,
-    gameRaw.cycleBranch, gameRaw.toggleInstall, gameRaw.checkInstalls,
-    gameRaw.handleLaunch, gameRaw.stopGame, gameRaw.addCustomEdition,
-    gameRaw.deleteCustomEdition, gameRaw.downloadRunner
-  ]);
+  const game = useMemo(
+    () => gameRaw,
+    [
+      gameRaw.installs,
+      gameRaw.isGameRunning,
+      gameRaw.downloadProgress,
+      gameRaw.downloadingIds,
+      gameRaw.editions,
+      gameRaw.isRunnerDownloading,
+      gameRaw.runnerDownloadProgress,
+      gameRaw.error,
+      gameRaw.updateCustomEdition,
+      gameRaw.handleUninstall,
+      gameRaw.handleCancelDownload,
+      gameRaw.gameUpdateMessage,
+      configRaw.profile,
+      gameRaw.updatesAvailable,
+      gameRaw.addToSteam,
+      gameRaw.steamSuccessMessage,
+      gameRaw.cycleBranch,
+      gameRaw.toggleInstall,
+      gameRaw.checkInstalls,
+      gameRaw.handleLaunch,
+      gameRaw.stopGame,
+      gameRaw.addCustomEdition,
+      gameRaw.deleteCustomEdition,
+      gameRaw.downloadRunner,
+      gameRaw.customizations,
+      gameRaw.updateCustomization,
+      gameRaw.gameLog,
+      gameRaw.clearGameLog,
+    ],
+  );
 
-  const audio = useMemo(() => audioRaw, [
-    audioRaw.currentTrack, audioRaw.splashIndex, audioRaw.tracks, audioRaw.splashes
-  ]);
+  const audio = useMemo(
+    () => audioRaw,
+    [
+      audioRaw.currentTrack,
+      audioRaw.splashIndex,
+      audioRaw.tracks,
+      audioRaw.splashes,
+    ],
+  );
 
   useDiscordRPC({
     rpcEnabled: config.rpcEnabled,
@@ -93,7 +166,7 @@ export function LauncherProvider({ children }: { children: React.ReactNode }) {
     activeView,
     isGameRunning: game.isGameRunning,
     downloadProgress: game.downloadProgress,
-    downloadingId: game.downloadingId,
+    downloadingIds: game.downloadingIds,
     editions: game.editions,
     isWindowVisible,
   });
@@ -105,7 +178,7 @@ export function LauncherProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (activeView === "main") {
-      audioRaw.setSplashIndex(-1);
+      audioRaw.setSplashIndex(Math.floor(Math.random() * SPLASHES.length));
     }
   }, [activeView]);
 
@@ -125,6 +198,8 @@ export function LauncherProvider({ children }: { children: React.ReactNode }) {
         appleSiliconPerformanceBoost: config.perfBoost,
         profile: config.profile,
         customEditions: config.customEditions,
+        customPaths: config.customPaths,
+        customizations: config.customizations,
         animationsEnabled: config.animationsEnabled,
         vfxEnabled: config.vfxEnabled,
         rpcEnabled: config.rpcEnabled,
@@ -135,46 +210,73 @@ export function LauncherProvider({ children }: { children: React.ReactNode }) {
         extraLaunchArgs: config.extraLaunchArgs,
         launchPrefix: config.launchPrefix,
         launchEnvVars: config.launchEnvVars,
+        startFullscreen: config.startFullscreen,
+        skipIntro: config.skipIntro,
+        instanceLaunchArgs: config.instanceLaunchArgs,
       }).catch(console.error);
     }
   }, [
-    config.username, skinSync.skinBase64, config.theme, config.linuxRunner,
-    config.perfBoost, config.customEditions, config.profile,
-    config.vfxEnabled, config.animationsEnabled,
-    config.rpcEnabled, config.musicVol, config.sfxVol, config.legacyMode,
-    config.mangohudEnabled, config.extraLaunchArgs, config.launchPrefix,
-    config.launchEnvVars, config.isLoaded
+    config.username,
+    skinSync.skinBase64,
+    config.theme,
+    config.linuxRunner,
+    config.perfBoost,
+    config.customEditions,
+    config.profile,
+    config.customPaths,
+    config.customizations,
+    config.vfxEnabled,
+    config.animationsEnabled,
+    config.rpcEnabled,
+    config.musicVol,
+    config.sfxVol,
+    config.legacyMode,
+    config.mangohudEnabled,
+    config.extraLaunchArgs,
+    config.launchPrefix,
+    config.launchEnvVars,
+    config.isLoaded,
+    config.startFullscreen,
+    config.skipIntro,
+    config.instanceLaunchArgs,
   ]);
 
   useEffect(() => {
     const setupVisibilityDetection = async () => {
       try {
         const { listen } = await import("@tauri-apps/api/event");
-
-        const unlistenClose = await listen("tauri://close-requested", () => {
-          console.log("Window close requested - hiding music");
-          setIsWindowVisible(false);
-        });
+        const unlistenClose = await listen(
+          "tauri://close-requested",
+          async () => {
+            setIsWindowVisible(false);
+            if (config.rpcEnabled) {
+              await RpcService.StopRPC();
+            }
+          },
+        );
 
         const unlistenShow = await listen("tauri://window-shown", () => {
-          console.log("Window shown - resuming music");
           setIsWindowVisible(true);
         });
 
         const unlistenFocus = await listen("tauri://focus", () => {
-          console.log("Window focused - resuming music");
           setIsWindowVisible(true);
         });
 
         const unlistenBlur = await listen("tauri://blur", () => {
-          console.log("Window blurred - checking visibility");
+          setIsWindowVisible(false);
         });
 
+        const onVisibilityChange = () => {
+          setIsWindowVisible(!document.hidden);
+        };
+        document.addEventListener("visibilitychange", onVisibilityChange);
         return () => {
           unlistenClose();
           unlistenShow();
           unlistenFocus();
           unlistenBlur();
+          document.removeEventListener("visibilitychange", onVisibilityChange);
         };
       } catch (error) {
         console.error("Failed to setup visibility detection:", error);
@@ -183,16 +285,43 @@ export function LauncherProvider({ children }: { children: React.ReactNode }) {
     };
 
     setupVisibilityDetection();
-  }, []);
+  }, [config.rpcEnabled]);
 
-  const uiValue = useMemo(() => ({
-    activeView, setActiveView, showIntro, setShowIntro,
-    logoAnimDone, setLogoAnimDone, isUiHidden, setIsUiHidden,
-    isWindowVisible,
-    showCredits, setShowCredits, focusSection, setFocusSection,
-    onNavigateToSkin, onNavigateToMenu, connected,
-    updateMessage, updateUrl, clearUpdateMessage
-  }), [activeView, showIntro, logoAnimDone, isUiHidden, isWindowVisible, showCredits, focusSection, onNavigateToSkin, onNavigateToMenu, connected, updateMessage, updateUrl, clearUpdateMessage]);
+  const uiValue = useMemo(
+    () => ({
+      activeView,
+      setActiveView,
+      showIntro,
+      setShowIntro,
+      logoAnimDone,
+      setLogoAnimDone,
+      isUiHidden,
+      setIsUiHidden,
+      isWindowVisible,
+      focusSection,
+      setFocusSection,
+      onNavigateToSkin,
+      onNavigateToMenu,
+      connected,
+      updateMessage,
+      updateUrl,
+      clearUpdateMessage,
+    }),
+    [
+      activeView,
+      showIntro,
+      logoAnimDone,
+      isUiHidden,
+      isWindowVisible,
+      focusSection,
+      onNavigateToSkin,
+      onNavigateToMenu,
+      connected,
+      updateMessage,
+      updateUrl,
+      clearUpdateMessage,
+    ],
+  );
 
   return (
     <UIContext.Provider value={uiValue}>
@@ -209,8 +338,28 @@ export function LauncherProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export const useUI = () => { const c = useContext(UIContext); if (!c) throw new Error("useUI must be used within LauncherProvider"); return c; };
-export const useConfig = () => { const c = useContext(ConfigContext); if (!c) throw new Error("useConfig must be used within LauncherProvider"); return c; };
-export const useAudio = () => { const c = useContext(AudioContext); if (!c) throw new Error("useAudio must be used within LauncherProvider"); return c; };
-export const useGame = () => { const c = useContext(GameContext); if (!c) throw new Error("useGame must be used within LauncherProvider"); return c; };
-export const useSkin = () => { const c = useContext(SkinContext); if (!c) throw new Error("useSkin must be used within LauncherProvider"); return c; };
+export const useUI = () => {
+  const c = useContext(UIContext);
+  if (!c) throw new Error("useUI must be used within LauncherProvider");
+  return c;
+};
+export const useConfig = () => {
+  const c = useContext(ConfigContext);
+  if (!c) throw new Error("useConfig must be used within LauncherProvider");
+  return c;
+};
+export const useAudio = () => {
+  const c = useContext(AudioContext);
+  if (!c) throw new Error("useAudio must be used within LauncherProvider");
+  return c;
+};
+export const useGame = () => {
+  const c = useContext(GameContext);
+  if (!c) throw new Error("useGame must be used within LauncherProvider");
+  return c;
+};
+export const useSkin = () => {
+  const c = useContext(SkinContext);
+  if (!c) throw new Error("useSkin must be used within LauncherProvider");
+  return c;
+};
